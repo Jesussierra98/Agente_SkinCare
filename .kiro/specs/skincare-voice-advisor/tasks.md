@@ -1,0 +1,428 @@
+# Implementation Plan: Asesor Virtual de Skincare por Voz (skincare-voice-advisor)
+
+## Overview
+
+Plan de implementación incremental siguiendo las fases de `requirements.md` y la arquitectura de `design.md`. Cada fase deja algo que se puede ejecutar y ver. Primero se construye la lógica pura (ETL, Motor_Rutina, Guardar, PubMed, perfil, Caja), luego las piezas con I/O y voz, luego los frontends, y al final se empaqueta todo en CloudFormation.
+
+Lenguajes y herramientas:
+
+- Backend (ETL, agente, Lambda de Caja): Python 3.12. Pruebas con pytest, Hypothesis y moto.
+- Frontend (Vista_Cliente y Vista_Caja): TypeScript, React, Vite, Tailwind. Pruebas con Vitest, fast-check y Testing Library.
+- IaC: CloudFormation (5 stacks), validada con cfn-lint y cfn-guard.
+
+Notas de orden:
+
+- La tarea 1 incluye un prototipo de extremo a extremo (tareas 1.4 a 1.10): las pantallas con datos simulados, luego el agente de voz con Nova 2 Sonic real y un catálogo genérico de muestra, y la conexión entre ambos. Sirve para validar la voz y la interfaz antes de construir la arquitectura completa. Las tareas 2 en adelante reemplazan los datos de muestra y las implementaciones en memoria por el catálogo real, DynamoDB, la Knowledge Base, SNS y Cognito, sin reescribir el agente ni el front.
+
+- El documento de requerimientos ordena las fases como 1 ETL, 2 Motor_Rutina, 3 Agente, 4 Frontend, 5 Backend serverless, 6 IaC. Aquí las librerías de `Herramienta_Guardar` y `Consultor_PubMed` (fase 5) se construyen antes del agente para que sus herramientas se puedan integrar sin dobles. La API_Caja y los frontends siguen después del agente.
+- Las tareas marcadas con `*` son opcionales (pruebas). Se pueden omitir para un MVP más rápido, pero las propiedades de corrección del diseño quedan sin verificar.
+- Las propiedades se refieren a la sección "Correctness Properties" de `design.md`. Cada prueba de propiedad lleva el comentario `Feature: skincare-voice-advisor, Property {n}: {texto}`, usa una sola prueba por propiedad y corre al menos 100 iteraciones.
+- Los puntos abiertos del diseño (canal de derivación, CSV real, idioma de la interfaz, fronteras de presupuesto, spikes) se marcan en las tareas donde bloquean algo.
+
+## Tasks
+
+- [ ] 1. Preparar el repositorio y las herramientas base
+  - [x] 1.1 Crear la estructura de carpetas y la configuración de proyecto
+    - Crear `cloudformation/`, `src/etl/`, `src/agent/`, `src/caja_api/`, `src/frontend/`, `catalog/`, `scripts/`.
+    - Agregar `.gitignore` (Python, Node, `.env`, artefactos de build) y `README.md` con el orden de despliegue y cómo correr las pruebas.
+    - Crear `.kiro/project-spec.json` con el nombre del proyecto y la región `us-east-1`.
+    - _Requirements: 22.1, 22.3_
+  - [ ] 1.2 Configurar el entorno Python y las pruebas
+    - Crear `pyproject.toml` (o `requirements-dev.txt`) con versiones fijas de `pytest`, `hypothesis`, `moto`, `freezegun`, `ftfy`, `boto3`, `jsonschema`.
+    - Crear `conftest.py` con un perfil de Hypothesis de 100 iteraciones mínimo.
+    - _Requirements: 1.2, 2.1_
+  - [x] 1.3 Configurar el proyecto frontend
+    - Inicializar React + Vite + TypeScript + Tailwind en `src/frontend/` con versiones fijas.
+    - Agregar Vitest, fast-check, Testing Library y `axe-core`.
+    - _Requirements: 18.1, 19.1_
+  - [x] 1.4 Prototipo visual del Kiosco con datos simulados
+    - Fidelidad obligatoria a las pantallas 1, 2 y 3 de `ui-reference.md` (inicio, conversación y "Tu rutina"), con los rótulos, colores, tipografía y distribución del diseño entregado. Las diferencias con los requerimientos no se deciden solas: se anotan en la tabla de `ui-reference.md` y se consultan.
+    - Construir las tres pantallas del Kiosco (`Kiosk.tsx`) con los componentes del diseño: `ListeningIndicator`, `Transcript`, `RoutineGrid` + `ProductCard`, `UsagePopover`, `CheckoutCard` (QR y código corto), `ReadingsCard` y `SafetyFooter`.
+    - Usar un `MockVoiceSession` que reproduzca un guion local: transcripción que avanza, indicador de escucha activo, aparición de la rutina de 4 productos de ejemplo, QR y código `ABC-234`. También simular una derivación y una pérdida de conexión para ver esos estados.
+    - Sin AWS, sin micrófono y sin backend. Se corre con `npm run dev` y se ve en el navegador (también en vista de iPad).
+    - Este prototipo lo reutilizan las tareas 10.x: allí solo se reemplaza el mock por la conexión real.
+    - _Requirements: 18.1, 18.2, 18.3, 18.4, 18.5, 18.6, 18.7, 18.8, 18.9, 18.12, 18.13, 18.14_
+  - [x] 1.5 Prototipo visual de la Vista_Caja con datos simulados
+    - Fidelidad obligatoria a las pantallas 4, 5 y 6 de `ui-reference.md` (acceso, lectura de QR y recomendación), en formato móvil vertical.
+    - Construir `LoginScreen`, `OperationalScreen` y `RoutineResult` con un `MockCajaApi` que devuelva la rutina de ejemplo para el código `ABC-234`, un código inexistente (404) y un estado ATENDIDA.
+    - El botón "MARCAR COMO ATENDIDA Y COMPLETAR DESPACHO" cambia el estado en memoria. Sin Cognito ni API real.
+    - _Requirements: 19.1, 19.2, 20.1, 20.2, 20.3, 20.4, 20.5, 20.6_
+  - [ ] 1.6 Checkpoint visual: revisar el diseño del front con el usuario
+    - Comparar cada pantalla con las imágenes de `.kiro/specs/skincare-voice-advisor/design/` y reportar qué coincide y qué no se pudo verificar (fuentes y colores exactos). Resolver con el usuario la tabla "Diferencias por resolver" de `ui-reference.md`.
+    - Levantar el prototipo y mostrar cómo se ve y cómo funciona cada pantalla. Recoger ajustes de diseño (colores, textos, distribución, idioma de los rótulos) antes de construir el backend.
+    - Pendiente de confirmar en esta revisión: si los rótulos del Kiosco deben ser bilingües y el texto del encabezado de Req. 20.1.
+  - [x] 1.7 Catálogo genérico de muestra
+    - Crear `catalog/sample_catalog.json` con unos 16 a 20 productos ficticios (al menos 4 por cada paso: Limpieza, Tratamiento, Hidratación, Protección solar) con los mismos campos que `ultra-productos`: `sku` (texto, con algún cero a la izquierda), `nombre`, `marca`, `paso_rutina`, `tipo_piel`, `precio`, `beneficios`, `ingredientes`, `modo_uso`, `imagen_url` (imágenes de reemplazo locales).
+    - Es solo para validar el flujo. No contiene datos del cliente y se reemplaza por el catálogo real en la tarea 2.
+    - _Requirements: 3.1, 4.1_
+  - [x] 1.8 Prototipo del agente de voz con Nova 2 Sonic real y datos locales
+    - Servidor local en `src/agent/` (WebSocket en `ws://localhost:8080/ws`, sin JWT) que use Strands `BidiAgent` + `BedrockNovaSonicModel` con la voz `tiffany` y el mismo protocolo JSON del diseño (`audio`, `transcript`, `routine`, `saved`, `interrupt`, `handoff`). `boto3` se usa para lo demás (por ejemplo Converse con Claude Haiku 4.5 para `armar_rutina`).
+    - Separar el acceso a datos detrás de interfaces pequeñas (`CatalogRepository`, `RecommendationStore`, `SessionStore`, `HandoffNotifier`) con implementaciones en memoria o en archivo que leen `sample_catalog.json`. Más adelante solo se cambian por las de DynamoDB, Knowledge Base y SNS sin tocar el agente ni las herramientas.
+    - Herramientas mínimas: `registrar_perfil`, `buscar_productos`, `armar_rutina`, `guardar_recomendacion` (genera `rec_id` y `codigo_corto` en memoria) y `derivar_asesor`. Reutilizar desde el inicio `ProfileState` y la validación de la salida del modelo del diseño, para que no sea código desechable.
+    - Detector básico de condiciones sensibles. Sin Guardrail de Bedrock ni Knowledge Base todavía.
+    - Requiere credenciales AWS locales y acceso al modelo de Nova 2 Sonic en `us-east-1`. Si no hay credenciales, usar la skill `signing-in-to-aws`.
+    - _Requirements: 5.1, 5.5, 5.10, 6.1, 7.2, 8.1, 9.1, 10.1, 13.1_
+  - [x] 1.9 Conectar el Kiosco al agente local
+    - Agregar al frontend el cliente WebSocket y la captura/reproducción de audio (`micCapture`, `playback`, worklets PCM16) y un interruptor para elegir entre `MockVoiceSession` y la sesión real local (`ws://localhost:8080/ws`).
+    - Validar de punta a punta en el navegador: hablar en español e inglés, ver la transcripción, recibir la rutina con productos de muestra, ver el QR y el código, y probar una frase sensible para ver la derivación.
+    - _Requirements: 5.1, 5.5, 5.6, 6.1, 6.8, 18.1, 18.2_
+  - [ ] 1.10 Checkpoint del prototipo de voz
+    - Probar la conversación real con el usuario. Registrar latencia percibida, calidad de la voz en español e inglés, comportamiento del barge-in y ajustes al prompt. Decidir con el usuario los cambios antes de pasar al catálogo real y a la arquitectura completa.
+
+- [ ] 2. Fase 1: Pipeline de catálogo (ETL local)
+  - [ ] 2.1 Implementar la decodificación y reparación de codificación
+    - En `src/etl/core/encoding.py`: `decode_rows(data: bytes) -> (rows, skipped)` con UTF-8 estricto (BOM opcional) y, si falla, lectura `latin-1` sin pérdida con reinterpretación por campo (UTF-8 estricto, luego cp1252 estricto). Las filas no decodificables se omiten y se reportan con número de fila base 1 (encabezado = fila 1).
+    - Implementar `fix_mojibake(s)` con `ftfy.fix_encoding` repetido hasta punto fijo (máximo 3 iteraciones) sin cambiar comillas, ligaduras ni normalización Unicode.
+    - Leer con el módulo `csv` y conservar todo como texto (el SKU `000375947` no pierde ceros).
+    - _Requirements: 1.1, 1.2, 1.3, 1.4, 1.5, 1.6_
+  - [ ]* 2.2 Pruebas de propiedad de codificación
+    - **Property 1: La reparación de mojibake recupera el texto original**
+    - **Property 2: La corrección de codificación es idempotente y no altera texto limpio**
+    - **Property 3: La decodificación de filas omite exactamente las filas inválidas y produce UTF-8 limpio**
+    - **Validates: Requirements 1.2, 1.3, 1.4, 1.5**
+  - [ ] 2.3 Implementar la sanitización de HTML
+    - En `src/etl/core/html.py`: `sanitize_html(v)` que convierte `li` y `p` en saltos de línea, `br` en salto, elimina `ul` y `b` (insensible a mayúsculas, con atributos y formas de apertura, cierre y autocierre), repite hasta que no quede etiqueta objetivo (caso `<<b>p>`), colapsa a lo más 2 saltos consecutivos y recorta extremos.
+    - Devolver sin cambios valores no textuales, vacíos o sin etiquetas objetivo.
+    - _Requirements: 2.1, 2.2, 2.3, 2.4, 2.5, 2.6_
+  - [ ]* 2.4 Pruebas de propiedad de sanitización
+    - **Property 4: La sanitización de HTML elimina etiquetas, conserva el texto y es idempotente**
+    - **Property 5: La sanitización de HTML es la identidad cuando no hay etiquetas objetivo**
+    - **Validates: Requirements 2.1, 2.2, 2.3, 2.4, 2.5**
+  - [ ] 2.5 Implementar clasificación, normalización y validación de productos
+    - En `src/etl/core/`: `classify_funcion(funcion, mapping)` (`strip().casefold()`), `normalize_brand(s, aliases)`, `normalize_skin_type(s)` (Grasa, Seca, Mixta, Todo tipo de piel; desconocido se registra y pasa a Todo tipo de piel), `parse_price(s)` (`Decimal`, 2 decimales `ROUND_HALF_UP`, rango 0 a 999,999.99) y `build_product(row, cfg)` que devuelve el producto con los 12 atributos del Diccionario más `detalle`, o un motivo de omisión (`sku_invalido`, `paso_no_mapeado`, `precio_invalido`).
+    - Conservar `funcion_original` sin cambios y registrar SKU y valor cuando `Funcion` no esté mapeada o esté vacía.
+    - Crear `column_map` (encabezados insensibles a mayúsculas y acentos) y `brand_aliases` como archivos de configuración versionados.
+    - _Requirements: 3.1, 3.6, 3.7, 4.5, 23.1, 23.5, 23.6, 23.8, 23.9_
+  - [ ] 2.6 Generar el mapa `Funcion → paso` con el CSV real
+    - Pendiente de confirmación: el archivo `catalog/feeder-skincare-catalog.csv` no está en el repositorio. Pedirlo al usuario antes de esta tarea.
+    - Listar los valores distintos de `Funcion` y los encabezados reales, y producir `funcion_map.json` (unas 50 variantes) y `column_map.json`.
+    - _Requirements: 3.2, 3.3, 3.4, 3.5_
+  - [ ]* 2.7 Pruebas de propiedad de clasificación y validación
+    - **Property 6: La clasificación es total y fiel**
+    - **Property 7: La normalización de marca es invariante a variantes de escritura e idempotente**
+    - **Property 8: La validación de productos acepta solo SKUs, pasos y precios válidos**
+    - **Validates: Requirements 3.1, 3.6, 3.7, 4.5, 23.1, 23.5, 23.6, 23.8, 23.9**
+  - [ ] 2.8 Generar los artefactos de la Knowledge Base
+    - `render_kb_markdown(p)` con el formato del diseño (nombre, SKU, marca, paso, tipo de piel, precio, Beneficios, Ingredientes, Detalle), un documento por SKU.
+    - `render_kb_metadata(p)` que devuelve `{"metadataAttributes": {"paso_rutina", "tipo_piel", "marca", "precio"}}` con los mismos valores del registro.
+    - Claves exactas: `productos/{sku}.md` y `productos/{sku}.md.metadata.json` (DD-09).
+    - _Requirements: 4.1, 4.2, 4.3_
+  - [ ]* 2.9 Prueba de propiedad de artefactos de la KB
+    - **Property 9: Los artefactos de la Knowledge Base son consistentes con el registro**
+    - **Validates: Requirements 4.1, 4.2, 4.3**
+  - [ ] 2.10 Implementar el script local `etl_catalog.py`
+    - Ejecuta el núcleo puro sobre un CSV local, genera `catalog_normalized.json`, imprime el resumen por paso en consola, y escribe los archivos `productos/{sku}.md` y `.md.metadata.json` en una carpeta local.
+    - Registrar filas omitidas (con número) y productos omitidos (con SKU y motivo).
+    - Entregable visible de la Fase 1.
+    - _Requirements: 1.1, 1.6, 3.1, 4.2, 4.3_
+  - [ ] 2.11 Implementar el handler de la ETL_Lambda (capa de I/O)
+    - En `src/etl/handler.py`: leer el objeto `raw/*.csv`, decodificar, construir productos, escribir en paralelo (hasta 32 hilos) `PutItem` en `ultra-productos` y los dos objetos de la KB por SKU, y escribir `normalized/{archivo}.csv` en UTF-8 (no modificar `raw/`).
+    - Un SKU repetido conserva la última fila y registra advertencia. Un fallo por SKU se registra y el proceso continúa, terminando en falla al final.
+    - Llamar a `bedrock-agent:StartIngestionJob` una sola vez si se escribió al menos un SKU; si falla, registrar descripción y nombre del CSV, conservar lo escrito y terminar en falla.
+    - Archivo vacío, sin encabezado o ilegible: registrar nombre y causa, sin salida.
+    - Configuración de la función: 1024 MB, timeout 300 s, `MaximumRetryAttempts: 0`.
+    - _Requirements: 1.7, 1.8, 4.4, 4.6, 4.7, 4.8, 2.6_
+  - [ ]* 2.12 Pruebas de propiedad del handler con moto
+    - **Property 10: Reprocesar un CSV no duplica ni cambia el estado**
+    - **Property 11: Un fallo de escritura de un SKU no afecta a los demás**
+    - **Validates: Requirements 4.7, 4.8**
+  - [ ]* 2.13 Pruebas unitarias del ETL
+    - Encabezados faltantes, archivo vacío, log de filas omitidas, una sola llamada a `StartIngestionJob`, error de `StartIngestionJob`, mapeos representativos por grupo de `Funcion`.
+    - _Requirements: 1.6, 1.7, 3.2, 4.6_
+
+- [ ] 3. Checkpoint: ETL
+  - Ejecutar todas las pruebas del ETL y correr `etl_catalog.py` sobre el CSV real. Confirmar con el usuario el resumen por paso y las variantes de `Funcion` sin mapear antes de continuar.
+
+- [ ] 4. Fase 2: Motor_Rutina y Guardrail
+  - [ ] 4.1 Implementar `ProfileState`
+    - En `src/agent/profile.py`: máquina de estados pura con los cuatro campos (`tipo_piel`, `inquietud`, `presupuesto`, `textura`) y sus categorías válidas.
+    - `apply(state, campo, valor)` acepta solo una categoría válida; ante respuesta inválida reformula una vez y luego marca `no_proporcionado`.
+    - `exchange_count`, `listo_para_proponer` (campos resueltos y ≥5 intercambios, o ≥10) y `basado_en_info_parcial`.
+    - Incluir el mapeo `tipo_piel` del perfil a valor del catálogo y el mapeo de `presupuesto` a rango (con `BUDGET_TIER_BOUNDS_MXN`).
+    - _Requirements: 7.2, 7.3, 7.4, 7.5, 7.6, 7.7, 7.8, 7.9_
+  - [ ]* 4.2 Pruebas de propiedad del perfil
+    - **Property 19: El perfil solo acepta categorías válidas y reformula una sola vez**
+    - **Property 20: El perfil está listo para proponer según el número de intercambios**
+    - **Validates: Requirements 7.2, 7.3, 7.4, 7.5, 7.6, 7.7, 7.8, 7.9**
+  - [ ] 4.3 Implementar la validación de la salida del modelo y `razon_catalogo`
+    - `validate_routine_output(output, candidates, products)` pura: cumple el schema, exactamente 4 pasos, cada SKU en los candidatos de su paso, existe en `ultra-productos`, `paso_rutina` coincide y `beneficios_idx` en rango.
+    - `compose_razon_catalogo(beneficios, idx)`: separa Beneficios por líneas o viñetas, concatena los elementos elegidos con un espacio en una sola línea y trunca en límite de palabra a ≤200 caracteres. Si Beneficios está vacío: cadena vacía y `sin_beneficios = true`.
+    - `build_routine_schema(candidates)`: JSON Schema por solicitud con `enum` de SKUs por paso, `additionalProperties: false` y `requiere_asesor`.
+    - _Requirements: 10.3, 10.4, 10.5, 11.1, 11.2, 11.3, 11.5, 11.6_
+  - [ ]* 4.4 Pruebas de propiedad de validación y razón
+    - **Property 27: La validación de la salida del modelo acepta solo rutinas correctas**
+    - **Property 30: `razon_catalogo` se compone solo de fragmentos del catálogo**
+    - **Validates: Requirements 10.3, 10.4, 10.5, 11.1, 11.2, 11.3, 11.5, 11.6**
+  - [ ] 4.5 Implementar `MotorRutina.armar`
+    - En `src/agent/routine_engine.py`: si hay indicador de alergia, acné severo o embarazo, devolver `requiere_asesor: true` sin llamar al LLM. Si falta algún paso, devolver `pasos_sin_candidatos` con la lista exacta, sin LLM.
+    - Llamar `bedrock-runtime:Converse` (Claude Haiku 4.5) con `outputConfig.textFormat` y el schema, `guardrailConfig` en el 100% de las llamadas, temperatura baja, cliente boto3 con `read_timeout=10` y `max_attempts=1`. Respaldo: tool use forzado si `outputConfig` no aplica al modelo.
+    - A lo más 2 invocaciones (un reintento). Una intervención del Guardrail cuenta como fallo del intento. Al final, rutina completa o error `no_fue_posible_armar`, nunca pasos parciales.
+    - Hidratar cada paso desde DynamoDB (`paso`, `sku`, `nombre`, `marca`, `precio`, `imagen_url`, `razon_catalogo`, `modo_uso`, `sin_beneficios`).
+    - _Requirements: 9.4, 10.1, 10.2, 10.6, 10.7, 10.8, 12.5_
+  - [ ]* 4.6 Pruebas de propiedad del Motor_Rutina
+    - **Property 23: Un indicador sensible impide generar y presentar rutina** (parte de `armar_rutina`)
+    - **Property 28: El Motor_Rutina hace a lo más 2 invocaciones y nunca devuelve rutinas parciales**
+    - **Property 29: Los pasos sin candidatos se reportan sin invocar al LLM**
+    - **Validates: Requirements 9.4, 10.6, 10.8, 12.5**
+  - [ ] 4.7 Escribir el system prompt y el Guardrail
+    - `src/agent/prompts.py`: Asesor Virtual de Skincare de Ultrafemme Cancún; catálogo cerrado; frase textual de Req. 8.2 en español y su traducción al inglés (8.5); idioma del último turno del cliente; sin compatibilidad química ni diagnósticos; lectura de `sin_candidatos`, `catalogo_no_disponible`, `requiere_asesor`, `lecturas_en_pantalla`.
+    - Prompt del Motor_Rutina: un producto por paso, solo candidatos, razón desde Beneficios, `requiere_asesor: true` ante alergia, acné severo o embarazo.
+    - Definir en un archivo de configuración los temas denegados del Guardrail `ultra-skincare-guardrail` (consejo médico, diagnóstico, compatibilidad química) que luego consume el stack 03.
+    - _Requirements: 8.2, 8.3, 8.5, 9.1, 9.2, 9.3, 12.1, 12.2_
+  - [ ] 4.8 Spike: Converse con salida estructurada en Claude Haiku 4.5
+    - Verificar en `us-east-1` el ID exacto del perfil de inferencia y el soporte de `outputConfig.textFormat`. Registrar el resultado en el README y ajustar `ROUTINE_MODEL_ID`. Requiere credenciales AWS (usar la skill `signing-in-to-aws` si hace falta).
+    - _Requirements: 10.1, 10.2_
+
+- [ ] 5. Fase 5 (adelantada): Herramienta_Guardar y Consultor_PubMed como librerías
+  - [ ] 5.1 Implementar validación y generación de código
+    - En `src/agent/save.py`: `validate_routine_for_save` (pura) con exactamente 4 objetos, `paso` entero 1 a 4 sin repetidos, campos `str` requeridos y `precio` 0 a 999,999.99 con máximo 2 decimales.
+    - `generate_codigo_corto()` con `secrets.choice`, letras `ABCDEFGHJKLMNPQRSTUVWXYZ` y dígitos `23456789`, formato `LLL-DDD` (DD-04).
+    - _Requirements: 13.2, 13.5, 13.6, 23.2, 23.3, 23.7, 23.9_
+  - [ ] 5.2 Implementar `guardar(routine, session)`
+    - Verificar los 4 SKUs con `BatchGetItem`, releer `nombre`, `marca`, `precio`, `imagen_url` y `modo_uso` de `ultra-productos`, generar `rec_id` UUID v4 y `codigo_corto` único consultando el GSI `codigo_corto-index` (máximo 5 intentos), y escribir con `PutItem` condicionado a `attribute_not_exists(rec_id)`: `estado="pendiente"`, `fecha_creacion` ISO 8601 UTC con `Z`. Timeout del cliente DynamoDB de 2 s, total ≤3 s.
+    - Si hay lecturas de PubMed, hacer un `UpdateItem` posterior para `lecturas_pubmed`; si falla, conservar la recomendación y devolver `warning: "lecturas_no_almacenadas"`.
+    - Escritura fallida o 5 colisiones: error `no_se_guardo` sin `rec_id` ni código.
+    - _Requirements: 13.1, 13.3, 13.4, 13.9, 13.10, 13.11, 17.6, 17.8, 23.4_
+  - [ ]* 5.3 Pruebas de propiedad de Guardar
+    - **Property 31: Guardar valida la rutina completa antes de escribir**
+    - **Property 32: El Codigo_Corto tiene el formato definido y es único dentro de 5 intentos**
+    - **Property 33: Guardar y consultar devuelve la misma recomendación por cualquier vía** (parte de guardado; la consulta por API se completa en 7.4)
+    - **Validates: Requirements 13.1, 13.2, 13.3, 13.4, 13.5, 13.6, 13.9, 13.11, 17.6, 23.3, 23.4, 23.7, 23.9**
+  - [ ] 5.4 Implementar el Consultor_PubMed
+    - En `src/agent/pubmed.py`: `ingredient_in_routine` (NFKD, sin diacríticos, `casefold`, coincidencia con elemento completo tras separar por comas y saltos de línea). Si no pertenece, rechazar sin leer caché, sin llamar a NCBI y sin escribir.
+    - Caché en `ultra-evidencias-ingredientes` con clave normalizada, vigencia de 30 días y `ttl`. API Key desde Secrets Manager. `eSearch` (retmax 5) y `eSummary`, timeout 5 s cada una, máximo 10 s en total. Éxito con 0 artículos se guarda; fallo de NCBI o Secrets Manager devuelve respuesta vacía sin escribir.
+    - La herramienta `evidencia_ingrediente` emite el evento `readings` al cliente, agrega a `SessionState.readings` y devuelve al modelo solo `{"lecturas_en_pantalla": true|false}`.
+    - Controlada por `PUBMED_ENABLED` (predeterminado `false`).
+    - _Requirements: 16.1, 16.2, 16.3, 16.4, 16.5, 16.6, 16.7, 17.1, 17.4, 17.7_
+  - [ ]* 5.5 Pruebas de propiedad de PubMed
+    - **Property 42: PubMed solo se consulta para ingredientes de la rutina**
+    - **Property 43: La caché de PubMed se comporta según su vigencia**
+    - **Property 45: El modelo de voz nunca recibe contenido de PubMed**
+    - **Validates: Requirements 16.1, 16.2, 16.3, 16.4, 16.5, 16.6, 16.7, 17.4**
+
+- [ ] 6. Checkpoint: Motor_Rutina, Guardar y PubMed
+  - Ejecutar todas las pruebas de Python. Resolver dudas con el usuario antes de pasar al agente de voz.
+
+- [ ] 7. Fase 3: Agente de voz (Runtime_Agente)
+  - Nota: parte de esta fase ya existe como prototipo local (tarea 1.8). Aquí se completa el agente de producción: se reemplazan las implementaciones en memoria por DynamoDB, Knowledge Base y SNS (misma interfaz), y se agregan TurnGate, Guardrail, renovación de conexión, watchdogs, autenticación JWT y el empaquetado en AgentCore.
+  - [ ] 7.1 Implementar la configuración del agente
+    - En `src/agent/config.py`: lectura de variables de entorno con valores seguros. `ENDPOINTING_SENSITIVITY` ∈ {HIGH, MEDIUM, LOW} (otro valor usa MEDIUM y registra); `NOVA_RESTART_AFTER_S` con 0 < n < 480 (otro valor usa 420 y registra); `NOVA_VOICE_ID` ∈ {tiffany, matthew}; `OUTPUT_SAMPLE_RATE` ∈ {16000, 24000}; `GUARDRAIL_ID`, `GUARDRAIL_VERSION`, `KB_ID`, `ROUTINE_MODEL_ID`, `BUDGET_TIER_BOUNDS_MXN`, `PUBMED_ENABLED`, `STORE_DOMAIN`.
+    - _Requirements: 5.10, 6.2, 24.4_
+  - [ ]* 7.2 Prueba de propiedad de configuración
+    - **Property 12: La lectura de configuración siempre produce un valor seguro**
+    - **Validates: Requirements 6.2, 24.4**
+  - [ ] 7.3 Implementar `SessionStore` y `SessionState`
+    - En `src/agent/session.py`: `SessionState` (perfil, intercambios, candidatos reducidos, rutina, lecturas, idioma, derivación, `recommendations_suspended`, `messages` acotado a 200 KiB y 50 KiB por mensaje, `created_at`, `ttl`).
+    - Persistir en `ultra-sesiones` en cada cambio con `ttl = created_at + 86400`. `load(session_id, now)` trata como inexistente una sesión con `now >= created_at + 86400` y devuelve error "iniciar nueva sesión".
+    - _Requirements: 21.8, 21.11, 24.5, 24.6_
+  - [ ]* 7.4 Pruebas de propiedad de sesión
+    - **Property 17: El contexto de sesión se conserva en el almacenamiento y en la renovación**
+    - **Property 18: Una sesión es válida exactamente durante sus primeras 24 horas**
+    - **Validates: Requirements 21.8, 21.11, 24.5, 24.6**
+  - [ ] 7.5 Implementar `LanguageTracker` y `SensitiveConditionDetector`
+    - `LanguageTracker` puro: cuenta palabras funcionales EN/ES por turno, en empate conserva el idioma anterior.
+    - `SensitiveConditionDetector`: léxico ES/EN (embarazo, embarazada, pregnant, alergia severa, allergic reaction, acné quístico, cystic acne, herida, wound, psoriasis, dermatitis, rosácea, pus, sangrado, etc.), insensible a mayúsculas y acentos, prefiere falsos positivos.
+    - _Requirements: 5.4, 9.1, 9.2_
+  - [ ]* 7.6 Pruebas de propiedad de idioma y detector
+    - **Property 13: El idioma vigente sigue al idioma del último turno del cliente**
+    - **Property 22: El detector de condiciones sensibles reconoce todo el léxico**
+    - **Validates: Requirements 5.4, 9.1**
+  - [ ] 7.7 Implementar la Toolbox del agente
+    - En `src/agent/tools.py`: `registrar_perfil`, `buscar_productos` (Retrieve con filtro `paso_rutina`, timeout 5 s, `BatchGetItem`, ranking por `tipo_piel` y presupuesto como preferencia, top 5, SKU tomado de `location.s3Location.uri`), `detalle_producto` (solo SKUs de la sesión), `armar_rutina`, `guardar_recomendacion`, `evidencia_ingrediente`, `derivar_asesor`.
+    - Ninguna herramienta recibe datos de producto del modelo (DD-06). Con `recommendations_suspended` las tres herramientas de recomendación devuelven `recomendacion_suspendida`.
+    - Resultados `sin_candidatos` y `catalogo_no_disponible` según el diseño.
+    - _Requirements: 8.1, 8.4, 8.6, 9.4, 9.5, 10.8, 13.1_
+  - [ ]* 7.8 Pruebas de propiedad de herramientas
+    - **Property 21: Las herramientas solo manejan productos del catálogo devueltos en la sesión**
+    - **Property 23: Un indicador sensible impide generar y presentar rutina** (parte de suspensión en sesión)
+    - **Validates: Requirements 8.1, 8.4, 9.4, 9.5**
+  - [ ] 7.9 Implementar Guardrail, TurnGate y audios pregrabados
+    - `GuardrailClient` con `ApplyGuardrail` (INPUT y OUTPUT), timeout 3 s.
+    - `TurnGate`: al llegar la transcripción final del cliente lanza en paralelo `ApplyGuardrail(INPUT)` y el detector; retiene el audio del modelo hasta la decisión (máximo 3 s). Solo el resultado `aprobado` deja pasar el audio. Intervención, detección sensible, timeout o error: descartar audio, enviar `interrupt`, reproducir el audio pregrabado del idioma vigente (≤200 caracteres, sin repetir lo bloqueado) e iniciar la derivación. Evaluar también la transcripción del asesor por oración con `ApplyGuardrail(OUTPUT)`.
+    - Script de build que genera los audios pregrabados ES/EN con la misma voz (bloqueo, derivación, "no te escucho", "la conversación va a terminar", "acuda al mostrador", "un asesor lo atenderá en breve").
+    - _Requirements: 12.3, 12.4, 12.6, 9.2, 24.10_
+  - [ ]* 7.10 Prueba de propiedad del TurnGate
+    - **Property 26: El TurnGate falla cerrado ante cualquier resultado del Guardrail que no sea aprobación**
+    - **Validates: Requirements 12.3, 12.4, 12.6**
+  - [ ] 7.11 Implementar `HandoffService`
+    - Escribir el registro de derivación en `ultra-sesiones` (motivo, perfil, hora, `estado="pendiente"`) y publicar en SNS `ultra-skincare-handoff` con motivo, perfil, `session_id` y enlace de confirmación, en ≤3 s. Emitir el evento `handoff`.
+    - Sin notificación en 10 s: reproducir "acuda al mostrador de asesoría en piso" y fijar `recommendations_suspended = true`. Sin confirmación en 30 s (consulta cada 2 s): reproducir una vez "un asesor lo atenderá en breve" y mantener la derivación activa.
+    - `condicion_sensible` y `requiere_asesor` suspenden recomendaciones; `diagnostico` y `compatibilidad` no.
+    - Pendiente de confirmar con el usuario: canal real del personal de piso (correo, SMS o chat con webhook) y si se acepta la pantalla mínima de confirmación (DD-14).
+    - _Requirements: 9.1, 9.3, 9.5, 9.7, 9.8, 12.7_
+  - [ ]* 7.12 Pruebas de propiedad de derivación
+    - **Property 24: La derivación respeta los plazos de 10 s y 30 s**
+    - **Property 25: La derivación entrega el motivo y el perfil sin cambios**
+    - **Validates: Requirements 9.7, 9.8, 12.7**
+  - [ ] 7.13 Implementar el `SessionSupervisor` y los watchdogs
+    - Watchdog de audio de entrada: más de 3 s sin marcos `audio` detiene la salida (`interrupt`), reproduce una vez "no te escucho" y conserva el estado.
+    - Barge-in: ante `BidiInterruptionEvent` envía `interrupt` al cliente.
+    - Renovación: escuchar `BidiConnectionRestartEvent`, actualizar `ultra-sesiones`, mantener el WebSocket abierto, temporizador de 5 s con `connection_error(renewal_failed)` y audio "la conversación va a terminar"; repetir `endpointingSensitivity` en cada conexión y repetir el perfil en el prompt restaurado.
+    - Métrica `ResponseLatencyMs` en CloudWatch EMF.
+    - Cierre por `hangup` o cierre del WebSocket: `promptEnd` y `sessionEnd`.
+    - _Requirements: 6.8, 6.9, 24.1, 24.2, 24.3, 24.5, 24.9, 24.10, 24.11, 5.2_
+  - [ ]* 7.14 Prueba de propiedad del watchdog
+    - **Property 16: El watchdog de audio de entrada se dispara solo tras más de 3 s de silencio del flujo**
+    - **Validates: Requirements 6.9**
+  - [ ] 7.15 Implementar el endpoint WebSocket `/ws`
+    - En `src/agent/agent.py`: `BedrockAgentCoreApp` con `@app.websocket`, `BidiAgent` + `BedrockNovaSonicModel` (voz `tiffany`, audio 16 kHz de entrada, `turnDetectionConfiguration.endpointingSensitivity`, `restart_after_s`).
+    - Protocolo JSON: cliente→servidor `audio`, `hangup`; servidor→cliente `session_ready`, `audio`, `interrupt`, `transcript`, `routine`, `saved`, `readings`, `handoff`, `connection_error`, `info`.
+    - Saludo bilingüe corto al iniciar; `session_ready` en ≤5 s. Mantener `/ws` sin crear registros si el handshake no es válido (lo valida AgentCore Inbound Auth).
+    - _Requirements: 5.1, 5.5, 5.6, 5.7, 5.10, 5.11, 5.12, 6.1, 21.2, 21.12_
+  - [ ] 7.16 Dockerfile ARM64 y script de smoke test
+    - `src/agent/Dockerfile` (Python 3.12, ARM64, puerto 8080) y `requirements.txt` con versiones fijas.
+    - `scripts/smoke_test.py`: handshake `wss://.../ws` en ≤10 s, un prompt en inglés y otro en español con respuesta no vacía en el idioma del prompt en ≤30 s; reporta cuál validación falló (handshake, inglés o español).
+    - _Requirements: 22.9, 22.10, 22.13_
+  - [ ] 7.17 Spikes de la Fase 3
+    - Medir el restart nativo de `BidiAgent` frente a 24.9 (hueco ≤2 s) y 24.10 (5 s). Si no cumple, implementar el reinicio orquestado por el supervisor con el historial guardado (DD-11).
+    - Validar el ID del modelo `amazon.nova-2-sonic-v1:0` y la voz `tiffany` en español.
+    - Requiere credenciales AWS y acceso a modelos.
+    - _Requirements: 24.9, 24.10, 5.10_
+  - [ ]* 7.18 Pruebas unitarias del agente
+    - Configuración del modelo (voz, `endpointingSensitivity`, `restart_after_s`), reenvío de `endpointingSensitivity` en la renovación, parámetros de la llamada Converse (`read_timeout=10`, `max_attempts=1`), WebSocket del cliente abierto durante un restart simulado, aviso a los 5 s de una renovación fallida.
+    - _Requirements: 6.2, 10.6, 24.3, 24.10_
+
+- [ ] 8. Checkpoint: Agente de voz
+  - Ejecutar todas las pruebas de Python y resolver dudas con el usuario antes de construir los frontends.
+
+- [ ] 9. Fase 5: API_Caja (`ultra-caja-lambda`)
+  - [ ] 9.1 Implementar la lógica pura de la API_Caja
+    - En `src/caja_api/core.py`: `classify_id(id)` (UUID v4 → clave; `strip().upper()` con `^[A-Z]{3}-\d{3}$` → GSI; otro → 400 `codigo_invalido`), armado de respuesta con `productos[4]` ordenados por `paso`, precios como cadena decimal con 2 decimales, y `total_sugerido` con `Decimal` (DD-12), y verificación de pertenencia al grupo `caja`.
+    - _Requirements: 13.10, 15.1, 15.2, 15.8, 15.9, 21.4_
+  - [ ] 9.2 Implementar el handler y las rutas
+    - `GET /recomendacion/{id}`: 403 si `cognito:groups` no incluye `caja`, 404 `no_encontrada` si no existe (sin datos de otra recomendación). Leer el snapshot guardado, no `ultra-productos`.
+    - `POST /recomendacion/{id}/atendida`: `UpdateItem` con `ConditionExpression: estado = :pendiente` fijando `estado="atendida"`, `fecha_atendida` (ISO 8601 UTC) y `cajero_id` (`username`, con `sub` de respaldo). Si falla la condición, leer y responder 200 con los valores originales. Error de DynamoDB: 500 sin modificar.
+    - `POST /derivaciones/{session_id}/confirmar`: `UpdateItem` sobre `ultra-sesiones` fijando `handoff.estado = "confirmada"`.
+    - Timeout 10 s y objetivo ≤3 s. Rol IAM con el mínimo privilegio del diseño.
+    - _Requirements: 13.12, 14.7, 15.3, 15.4, 15.6, 15.7, 15.9, 21.4, 22.12, 12.7_
+  - [ ]* 9.3 Pruebas de propiedad de la API_Caja con moto
+    - **Property 33: Guardar y consultar devuelve la misma recomendación por cualquier vía** (parte de consulta)
+    - **Property 34: Un identificador desconocido o inválido no devuelve ni modifica datos**
+    - **Property 36: Marcar como atendida es idempotente y conserva al primer cajero**
+    - **Property 37: Solo el grupo `caja` puede operar sobre recomendaciones**
+    - **Property 38: La respuesta de Caja tiene 4 productos ordenados y el total es la suma exacta**
+    - **Validates: Requirements 13.1, 13.4, 13.9, 13.10, 13.12, 15.1, 15.2, 15.3, 15.4, 15.6, 15.7, 15.8, 15.9, 20.4, 21.4**
+
+- [ ] 10. Fase 4: Vista_Cliente (Kiosco)
+  - [ ] 10.1 Implementar las funciones puras de `src/frontend/lib/`
+    - `encodeBearerSubprotocol`/`decodeBearerSubprotocol` (prefijo `base64UrlBearerAuthorization.`), `floatToPcm16`/`pcm16ToFloat`, `downsample`, `formatMXN`, `truncate`, `columnsForWidth`, `buildQrUrl`/`parseQrUrl` (valida UUID v4 y dominio), `readingsViewModel`, `productCardViewModel`.
+    - _Requirements: 5.5, 13.7, 17.1, 17.2, 18.3, 18.4, 18.8, 20.5, 21.2_
+  - [ ]* 10.2 Pruebas de propiedad de las funciones del Kiosco (fast-check)
+    - **Property 14: La conversión a PCM16 preserva el audio dentro de la cuantización**
+    - **Property 35: La URL del QR hace ida y vuelta**
+    - **Property 39: El formato MXN hace ida y vuelta**
+    - **Property 44: La tarjeta de lecturas muestra los primeros 5 títulos en orden y truncados**
+    - **Property 47: La tarjeta de producto muestra todos los campos y trunca la razón**
+    - **Property 49: La codificación del JWT en el subprotocolo hace ida y vuelta**
+    - **Validates: Requirements 5.5, 13.7, 17.1, 17.2, 18.4, 18.8, 20.5, 21.2**
+  - [ ] 10.3 Implementar autenticación y cliente WebSocket
+    - `auth/kioskAuth.ts`: aprovisionamiento único en `/kiosk/setup` y renovación del access token con `REFRESH_TOKEN_AUTH` antes de cada conexión (DD-03).
+    - `voice/wsClient.ts`: WebSocket con subprotocolo del JWT, `session_id` UUID por query param `X-Amzn-Bedrock-AgentCore-Runtime-Session-Id`, timeout de 5 s y eventos tipados.
+    - _Requirements: 5.7, 21.1, 21.2, 21.3_
+  - [ ] 10.4 Implementar captura y reproducción de audio
+    - `voice/micCapture.ts` con `getUserMedia({audio: {echoCancellation: true, noiseSuppression: true}})`, `AudioWorklet` (`pcm16-capture.js`), remuestreo a 16 kHz, marcos de ~64 ms.
+    - `voice/playback.ts` con `pcm16-playback.js`, cola a `output_sample_rate` y `flush()` al recibir `interrupt`.
+    - _Requirements: 5.5, 5.6, 6.1, 6.8_
+  - [ ]* 10.5 Prueba de propiedad de la cola de reproducción
+    - **Property 15: Una interrupción vacía la cola de reproducción**
+    - **Validates: Requirements 6.8**
+  - [ ] 10.6 Implementar la máquina de estados y el hook `useVoiceSession`
+    - Reductor con estados `idle`, `requesting_mic`, `connecting`, `active`, `lost`, `ended`. Errores de micrófono y de conexión con reintento, colgar en ≤1 s, mensaje de cierre inesperado en ≤3 s.
+    - Al perder la voz o recibir `connection_error`, conservar rutina, QR, código y transcripción.
+    - _Requirements: 5.7, 5.8, 5.9, 18.13, 24.11_
+  - [ ]* 10.7 Pruebas de propiedad del estado del Kiosco
+    - **Property 46: El indicador de escucha está activo solo mientras hay audio reciente**
+    - **Property 48: Perder la conexión de voz conserva lo mostrado**
+    - **Validates: Requirements 18.2, 18.12, 18.13, 24.11**
+  - [ ] 10.8 Completar los componentes de la pantalla "Tu rutina"
+    - Los componentes ya existen desde el prototipo 1.4; aquí se ajustan a los cambios acordados en el checkpoint 1.6 y se verifican los detalles de accesibilidad y tamaños.
+    - `ListeningIndicator` (pulso verde, se detiene ≤300 ms, "El asesor sigue escuchando", `aria-live="polite"`), `Transcript` (`role="log"`), `RoutineGrid` + `ProductCard` (4, 2 o 1 columnas; tarjeta de reemplazo si falta un paso; imagen de reemplazo con `onError`), `UsagePopover` accesible, `CheckoutCard` (QR con `qrcode.react` a 512 px, mostrado a ≥256 px CSS; código monoespaciado ≥24 px, contraste ≥7:1), `ReadingsCard` con la leyenda exacta de Req. 17.3, `SafetyFooter` (≥12 px, contraste ≥4.5:1).
+    - Sin formularios ni listas de preguntas. Orden de tabulación igual al visual.
+    - Pendiente de confirmar: si los rótulos deben ser bilingües (los wireframes están en español).
+    - _Requirements: 7.1, 17.3, 17.5, 18.1, 18.2, 18.3, 18.4, 18.5, 18.6, 18.7, 18.8, 18.9, 18.10, 18.11, 18.12, 18.14_
+  - [ ] 10.9 Conectar `Kiosk.tsx` a la sesión de voz real
+    - Reemplazar el `MockVoiceSession` del prototipo 1.4 por `useVoiceSession` y conectarlo con los componentes: procesar `routine`, `saved`, `readings`, `handoff`, `transcript`.
+    - _Requirements: 18.1, 18.2, 18.4, 18.5, 18.6, 12.4_
+  - [ ]* 10.10 Pruebas de ejemplo y accesibilidad del Kiosco
+    - Ausencia de formularios, `getUserMedia` con `echoCancellation` y `noiseSuppression`, colgar en ≤1 s, errores de micrófono y conexión, popover (apertura, Escape, clic fuera, foco), columnas 4/2/1, `axe-core` en cada pantalla.
+    - La conformidad completa con WCAG requiere pruebas manuales con tecnologías de apoyo y revisión experta; estas pruebas no la certifican.
+    - _Requirements: 5.5, 5.8, 18.3, 18.9, 18.10, 18.11_
+
+- [ ] 11. Fase 4: Vista_Caja
+  - [ ] 11.1 Implementar validadores y modelo de vista de Caja
+    - `isValidCode` (`strip`, mayúsculas, `^[A-Z]{3}-\d{3}$`), `validateImage` (`image/jpeg` o `image/png`, ≤10 MB) y el modelo de vista de la recomendación (botón habilitado solo si `PENDIENTE`, `fecha_atendida` en DD/MM/AAAA, total con `formatMXN`).
+    - _Requirements: 14.6, 15.5, 20.3, 20.5, 20.6, 20.8_
+  - [ ]* 11.2 Pruebas de propiedad de Caja (fast-check)
+    - **Property 40: El modelo de vista de Caja refleja el estado de la recomendación**
+    - **Property 41: Los validadores de entrada de Caja aceptan solo lo permitido**
+    - **Validates: Requirements 14.6, 15.5, 20.3, 20.6, 20.8**
+  - [ ] 11.3 Conectar la Vista_Caja a Cognito y a la API real
+    - Reemplazar el `MockCajaApi` del prototipo 1.5 por el cliente real.
+    - `auth/cajaAuth.ts` con `amazon-cognito-identity-js` (SRP) y `CajaClient`, tokens en `sessionStorage`. Un 401 o JWT vencido cierra la sesión local, muestra "la sesión expiró" y conserva el código.
+    - `lib/cajaApi.ts` con `fetch` y `AbortController` a 10 s.
+    - Guardia de ruta: sin sesión se muestra el login y ningún dato de rutinas.
+    - _Requirements: 14.10, 14.11, 19.9, 21.3_
+  - [ ] 11.4 Completar `LoginScreen`
+    - Ya existe en el prototipo 1.5; aquí se agregan las validaciones y los mensajes de error reales. Encabezado, título y textos de Req. 19. Usuario (máx. 64) y Contraseña (máx. 128, oculta). Valida campos vacíos sin enviar. Deshabilita "Entrar" mientras autentica. Credenciales rechazadas: conserva usuario, vacía contraseña y no indica cuál falló. Sin red o timeout de 10 s: mensaje distinto y conserva ambos valores.
+    - _Requirements: 19.1, 19.2, 19.3, 19.4, 19.5, 19.6, 19.7, 19.8_
+  - [ ] 11.5 Completar `OperationalScreen` y `RoutineResult`
+    - Ya existen en el prototipo 1.5; aquí se conectan el escáner y la carga de foto. Botones "Activar Cámara Escáner" (`html5-qrcode`) y "Subir Foto de QR" (`Html5Qrcode.scanFile`), campo Código `[ABC-123]` y "Buscar" (convierte a mayúsculas antes de validar). `parseQrUrl` para el QR; fallo o cámara denegada muestra el mensaje y mantiene foto y código manual.
+    - `RoutineResult`: "Rutina Identificada: #<Codigo_Corto> | <DD/MM/AAAA> | Estado: <ESTADO>", tabla de 4 filas por PASO con SKU, PRODUCTO, PASO y PRECIO, "TOTAL SUGERIDO" y el botón "MARCAR COMO ATENDIDA Y COMPLETAR DESPACHO". Error al despachar o sin respuesta en 10 s: mantiene PENDIENTE y el botón habilitado.
+    - Pendiente: el texto del encabezado de la vista operativa (Req. 20.1) está truncado en los requerimientos; pedirlo al usuario.
+    - _Requirements: 14.1, 14.2, 14.3, 14.4, 14.5, 14.6, 14.7, 14.8, 14.9, 15.5, 20.1, 20.2, 20.3, 20.4, 20.5, 20.6, 20.7, 20.9, 20.10_
+  - [ ] 11.6 Pantalla mínima de confirmación de derivación
+    - Página en la Vista_Caja que abre el enlace de la notificación y llama a `POST /derivaciones/{session_id}/confirmar`. Solo se construye si el usuario confirma el alcance (DD-14).
+    - _Requirements: 12.7_
+  - [ ]* 11.7 Pruebas de ejemplo de Caja
+    - Flujos de login, JWT vencido, guardia de ruta, campos vacíos, cámara denegada, imagen inválida, error de servidor.
+    - _Requirements: 14.6, 14.8, 14.10, 14.11, 19.7, 19.9_
+
+- [ ] 12. Checkpoint: frontends
+  - Ejecutar Vitest y revisar manualmente las pantallas con el usuario antes del empaquetado.
+
+- [ ] 13. Fase 6: Infraestructura como código
+  - [ ] 13.1 Stack `01-base-storage-db.yaml` (`ultra-skincare-storage`)
+    - 4 buckets S3 (hosting, logs, raw data, KB source) con `PublicAccessBlock` y cifrado, 4 tablas DynamoDB on-demand (`ultra-productos`, `ultra-recomendaciones` con GSI `codigo_corto-index`, `ultra-sesiones` con TTL en `ttl`, `ultra-evidencias-ingredientes` con TTL), llave KMS y un Budget con alerta. `CAPABILITY_NAMED_IAM`.
+    - _Requirements: 21.7, 22.3, 22.5, 22.6, 23.1, 23.4_
+  - [ ] 13.2 Stack `02-auth-cognito.yaml` (`ultra-skincare-auth`)
+    - User Pool `ultra-skincare-userpool` sin autorregistro, grupos `kiosco` y `caja`, app clients `KioscoClient` (`USER_PASSWORD_AUTH`, `REFRESH_TOKEN_AUTH`, access token 60 min) y `CajaClient` (`USER_SRP_AUTH`, `REFRESH_TOKEN_AUTH`).
+    - _Requirements: 21.1, 21.3, 22.3_
+  - [ ] 13.3 Stack `03-bedrock-kb-guardrail.yaml` (`ultra-skincare-bedrock`)
+    - Guardrail `ultra-skincare-guardrail` con los temas denegados de 4.7, bucket e índice de S3 Vectors, Knowledge Base (Titan Text Embeddings V2) y data source sobre el bucket KB source, prefijo `productos/`, `ChunkingStrategy: NONE`.
+    - _Requirements: 12.1, 12.2, 22.3_
+  - [ ] 13.4 Stack `04-api-and-lambdas.yaml` (`ultra-skincare-compute`)
+    - ETL_Lambda (evento S3 con `prefix=raw/` y `suffix=.csv`), `ultra-caja-lambda`, HTTP API con JWT Authorizer (audiencia: ambos clientes, DD-13) y CORS limitado al dominio de CloudFront, repositorio ECR `ultra-skincare-agent`, tópico SNS `ultra-skincare-handoff`, secreto de PubMed y roles IAM con nombre de mínimo privilegio (`ultra-skincare-etl-role`, `ultra-skincare-caja-role`, `ultra-skincare-agent-runtime-role`). `CAPABILITY_NAMED_IAM`.
+    - _Requirements: 21.5, 21.9, 22.3, 22.5, 22.7, 22.8, 22.12_
+  - [ ] 13.5 Stack `05-frontend-hosting.yaml` (`ultra-skincare-frontend`)
+    - CloudFront con OAC, política de bucket, redirección HTTP→HTTPS, `MinimumProtocolVersion: TLSv1.2_2021`, cabeceras de seguridad (CSP con `connect-src` a `wss://bedrock-agentcore.us-east-1.amazonaws.com`, Cognito y la API; `Permissions-Policy: microphone=(self), camera=(self)`).
+    - _Requirements: 21.6, 21.7, 21.10, 22.3_
+  - [ ] 13.6 Scripts de despliegue
+    - `scripts/deploy.ps1` y `scripts/deploy.sh` que corran `aws cloudformation deploy` en el orden storage → auth → bedrock → compute → frontend, se detengan ante una falla nombrando stack y causa, y después construyan y publiquen la imagen en ECR, ejecuten `agentcore deploy` con las variables de entorno y lancen `smoke_test.py`.
+    - Antes de desplegar en una cuenta AWS real, mostrar al usuario qué recursos se crearán y pedir confirmación.
+    - _Requirements: 22.4, 22.9, 22.10, 22.11, 22.13_
+  - [ ]* 13.7 Validación de plantillas
+    - `cfn-lint` y `cfn-guard` (sin comodines IAM, HTTPS, OAC, bloqueo público) y pruebas de aserciones sobre las plantillas: nombres de stacks, grupos, clientes, TTL, GSI.
+    - _Requirements: 21.6, 21.7, 21.9, 22.3_
+
+- [ ] 14. Integración, humo y piloto
+  - [ ] 14.1 Pruebas de integración
+    - Subir un CSV a `raw/` y medir inicio del ETL (≤60 s) y fin (≤300 s con ~50 MB). Handshake `wss://.../ws` desde Safari en iPad con el subprotocolo y rechazo sin token (sin filas en `ultra-sesiones`). API_Caja sin token, con token expirado y malformado (401) y con token de `KioscoClient` (403). Sesión de 15 minutos con al menos una renovación.
+    - _Requirements: 1.8, 4.4, 21.2, 21.5, 21.12, 24.1_
+  - [ ] 14.2 Arnés de evaluación conversacional
+    - Conversaciones guionadas para la conducta del LLM (frases textuales, idioma, no verbalizar lecturas) y casos de aceptación TC-01 a TC-06 en el entorno de pruebas.
+    - _Requirements: 8.2, 8.3, 8.5, 17.5, 24.7_
+  - [ ] 14.3 Guía de piloto
+    - Documentar los bancos de 100 turnos con ruido de la tienda (Req. 6.4, 6.5), 100 emisiones sin cliente para eco (6.6), barge-in ≤500 ms, hueco de renovación ≤2 s, latencia ≤2 s y validación de acento mexicano (`tiffany` frente a `matthew`).
+    - _Requirements: 5.2, 5.3, 6.3, 6.4, 6.5, 6.6, 6.8, 24.9_
+
+- [ ] 15. Checkpoint final
+  - Ejecutar todas las pruebas de Python y TypeScript, revisar que las plantillas pasan `cfn-lint` y confirmar con el usuario antes de cualquier despliegue a AWS.
+
+## Notes
+
+- Las tareas con `*` son opcionales (pruebas) y se pueden omitir para un MVP más rápido.
+- Cada tarea referencia los requerimientos de `requirements.md`; cada propiedad referencia la sección "Correctness Properties" de `design.md`.
+- Los checkpoints son puntos para detenerse, correr las pruebas y confirmar con el usuario.
+- Bloqueos conocidos que necesitan información del usuario: CSV real del catálogo (2.6), canal de derivación (7.11), idioma de los rótulos (10.8), texto del encabezado de Req. 20.1 (11.5) y credenciales AWS (4.8, 7.17, 13.6).
+- Las pruebas de latencia y calidad de voz, la conducta del LLM, la infraestructura y los componentes visuales no son propiedades universales; se cubren con integración, piloto y revisión manual, como describe la estrategia de pruebas del diseño.
+

@@ -1,0 +1,78 @@
+@import '@fontsource-variable/bodoni-moda/opsz.css';
+@import '@fontsource-variable/hanken-grotesk';
+@import 'tailwindcss';
+
+/*
+ * Tokens de diseño. Los colores salen de muestrear los PNG entregados
+ * (.kiro/specs/skincare-voice-advisor/design/). Las tipografías son una
+ * aproximación: no se tienen los archivos de fuente originales.
+ */
+@theme {
+  --color-canvas: #edf0ec;
+  --color-ink: #15211d;
+  --color-brand: #1e4a3d;
+  --color-danger: #9b2c2c;
+  --color-line: #c9d1cb;
+  --color-placeholder: #dde3de;
+  --color-muted: #55645c;
+  --color-faint: #8a978f;
+  --color-field: #7a8a80;
+
+  --font-display: 'Bodoni Moda Variable', 'Bodoni MT', 'Didot', serif;
+  --font-sans: 'Hanken Grotesk Variable', system-ui, sans-serif;
+  --font-mono: ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace;
+}
+
+@layer base {
+  html,
+  body,
+  #root {
+    min-height: 100%;
+  }
+
+  body {
+    margin: 0;
+    background: var(--color-canvas);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  button,
+  input {
+    font: inherit;
+    border-radius: 0; /* esquinas rectas en todo el diseño */
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-brand);
+    outline-offset: 2px;
+  }
+}
+
+/* Rótulo pequeño en mayúsculas con interletrado amplio */
+@layer components {
+  .eyebrow {
+    font-size: 13px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--color-muted);
+  }
+}
+
+/* Barras de la onda de audio */
+@keyframes wave {
+  0%,
+  100% {
+    transform: scaleY(0.35);
+  }
+  50% {
+    transform: scaleY(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .wave-bar {
+    animation: none !important;
+  }
+}

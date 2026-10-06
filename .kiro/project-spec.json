@@ -1,0 +1,6 @@
+{
+  "name": "skincare-voice-advisor",
+  "description": "Asesor Virtual de Skincare por Voz - Grupo Ultra (Ultrafemme Cancun)",
+  "region": "us-east-1",
+  "specDir": ".kiro/specs/skincare-voice-advisor"
+}

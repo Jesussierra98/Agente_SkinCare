@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+.hypothesis/
+.mypy_cache/
+*.egg-info/
+
+# Node
+node_modules/
+dist/
+coverage/
+
+# Entorno y secretos
+.env
+.env.*
+*.pem
+
+# Artefactos locales
+catalog_normalized.json
+out/
+.DS_Store
