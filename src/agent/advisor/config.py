@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
 
+from .guide import Guide
 from .session import price_tier_bounds
 
 log = logging.getLogger("advisor.config")
@@ -80,12 +81,23 @@ class Config:
     budget_bounds: tuple[Decimal, Decimal]
     store_domain: str
     catalog_path: Path
+    guide_path: Path
     min_exchanges: int
+
+
+def default_catalog(repo_root: Path) -> Path:
+    """Catálogo real procesado por el ETL (`out/etl/catalog_normalized.json`) si existe; si no, el de muestra."""
+    processed = repo_root / "out" / "etl" / "catalog_normalized.json"
+    return processed if processed.exists() else repo_root / "catalog" / "sample_catalog.json"
 
 
 def load_config(env: dict[str, str] | None = None) -> Config:
     e = os.environ if env is None else env
     repo_root = Path(__file__).resolve().parents[3]
+    guide_path = Path(e.get("GUIDE_PATH") or str(repo_root / "src" / "etl" / "config" / "guide.json"))
+    # Fronteras $/$$/$$$: las de la guía del negocio, salvo que se indiquen por variable de entorno.
+    bounds_raw = e.get("BUDGET_TIER_BOUNDS_MXN")
+    bounds = price_tier_bounds(bounds_raw) if bounds_raw else Guide.load(guide_path).bounds()
     return Config(
         region=e.get("AWS_REGION", e.get("AWS_DEFAULT_REGION", "us-east-1")),
         nova_model_id=e.get("NOVA_MODEL_ID", "amazon.nova-2-sonic-v1:0"),
@@ -94,8 +106,9 @@ def load_config(env: dict[str, str] | None = None) -> Config:
         restart_after_s=parse_restart_after(e.get("NOVA_RESTART_AFTER_S")),
         output_sample_rate=parse_sample_rate(e.get("OUTPUT_SAMPLE_RATE")),
         routine_model_id=e.get("ROUTINE_MODEL_ID", "us.anthropic.claude-haiku-4-5-20251001-v1:0"),
-        budget_bounds=price_tier_bounds(e.get("BUDGET_TIER_BOUNDS_MXN", "800,2000")),
+        budget_bounds=bounds,
         store_domain=e.get("STORE_DOMAIN", "http://localhost:5173"),
-        catalog_path=Path(e.get("CATALOG_PATH", str(repo_root / "catalog" / "sample_catalog.json"))),
+        catalog_path=Path(e.get("CATALOG_PATH") or str(default_catalog(repo_root))),
+        guide_path=guide_path,
         min_exchanges=parse_min_exchanges(e.get("MIN_EXCHANGES")),
     )

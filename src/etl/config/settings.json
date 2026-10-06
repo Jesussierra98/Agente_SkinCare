@@ -1,0 +1,11 @@
+{
+  "_nota": "Ajustes del ETL. sku_pad_width: los SKU numéricos se rellenan con ceros a 9 dígitos (como en la URL del producto, el Diccionario de Datos y la guía de combinaciones). Los filtros dejan fuera lo que no es cuidado FACIAL.",
+  "sku_pad_width": 9,
+  "excluded_brands": [
+    "Jo Malone London", "Rituals", "Moroccanoil", "Olaplex", "Tweezerman", "Skin Gym",
+    "Victoria´S Secret", "Victoria's Secret", "Creed", "Calvin Klein", "Sarelly Sarelly", "Carolina Herrera"
+  ],
+  "excluded_tipos_producto": ["Sets", "Accesorios", "Dispositivos", "Bronceadores", "Prebases", "Labiales", "Sprays"],
+  "non_facial_regex": "\\b(body|corporal|corporales|hand|hands|manos|foot|feet|pies|lip|lips|labios|labial|hair|cabello|shave|afeitar|deodorant|desodorante|pediatric|pediátrico|pediatrico|after[- ]sun|tanning|tan deepener|sun oil|sun body|bronceador)\\b",
+  "non_facial_exception_regex": "(make-?up remover|remover|desmaquill|cleans|wash|eye)"
+}

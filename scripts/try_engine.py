@@ -13,7 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src" / "agent"))
 from advisor.config import load_config  # noqa: E402
 from advisor.local import JsonCatalog  # noqa: E402
 from advisor.models import PASOS  # noqa: E402
-from advisor.profile import TIPO_PIEL_CATALOGO, ProfileState, tier_for_price  # noqa: E402
+from advisor.profile import TIPO_PIEL_CATALOGO, ProfileState, profile_query, tier_for_price  # noqa: E402
 from advisor.routine import RoutineEngine, rank_candidates  # noqa: E402
 
 
@@ -40,6 +40,7 @@ async def main() -> None:
             TIPO_PIEL_CATALOGO.get(profile.valores["tipo_piel"]),
             profile.valores.get("presupuesto"),
             lambda p: tier_for_price(p.precio, cfg.budget_bounds),
+            profile_query(profile.valores),
         )
     result = await engine.armar(profile.to_dict(), candidates, [])
     print(json.dumps(result, ensure_ascii=False, indent=2))

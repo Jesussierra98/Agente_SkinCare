@@ -1,0 +1,7 @@
+{
+  "_nota": "Alias de marca → nombre canónico (se comparan en mayúsculas). Marcas reales del CSV: LANCOME, CLINIQUE, BEAUTYPRO, ISDIN, COLORESCIENCE, LA MER, RICE & SHINE, ESTEE LAUDER, MAC, SISLEY, SISLEY PARIS, NUXE. Los acentos se restauran siguiendo el Req. 4.5 (LANCÔME).",
+  "LANCOME": "LANCÔME",
+  "LANCÔME PARIS": "LANCÔME",
+  "ESTEE LAUDER": "ESTÉE LAUDER",
+  "SISLEY PARIS": "SISLEY"
+}

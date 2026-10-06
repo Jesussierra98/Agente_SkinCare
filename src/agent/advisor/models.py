@@ -31,6 +31,12 @@ class Product:
     modo_uso: str
     imagen_url: str
     detalle: str = ""
+    funcion_original: str = ""
+    tipo_producto: str = ""
+    sublinea: str = ""
+    coleccion: str = ""
+    genero: str = ""
+    inventario: int | None = None
 
     @property
     def beneficios_list(self) -> list[str]:

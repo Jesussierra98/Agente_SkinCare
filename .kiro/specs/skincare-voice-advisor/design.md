@@ -1158,6 +1158,14 @@ El diseño cumple la intención de cada requerimiento, pero en estos puntos el t
 | 8 | 11.1 | "2 renglones": se interpreta como una sola línea de hasta 200 caracteres, sin saltos. | `razon_catalogo` de una línea. |
 | 9 | 20.1 | El texto del encabezado de la vista operativa está truncado en el documento. | Pendiente de completar. |
 | 10 | 20.8 vs 13.10 | 20.8 pide formato en mayúsculas; 13.10 pide tolerar minúsculas. | La UI convierte a mayúsculas antes de validar; la API acepta minúsculas. |
+| 11 | 2.1 | El CSV real trae `<strong>` y `<em>`, además de las 5 etiquetas del requerimiento. | El sanitizador también quita `strong` y `em` (equivalen a `b` e `i`). |
+| 12 | Diccionario de Datos | `imagen_url` debe ser HTTPS, pero el CSV trae `http://` (que redirige). | El ETL cambia `http://` por `https://`. |
+| 13 | 4.1 | El CSV trae `Coleccion` y `Genero`, útiles para la búsqueda. | Se agregan a `ultra-productos` y al documento de la KB (como `detalle`). |
+| 14 | 1.2 | El CSV trae caracteres invisibles (U+2028, U+200B, NBSP) que ensucian pantalla y voz. | El ETL los normaliza (salto de línea, nada, espacio). |
+| 15 | Diccionario de Datos | SKU de 5 o 6 dígitos en el CSV; la URL del producto y el ejemplo del Diccionario usan 9 (`000369926`). | `sku_pad_width` en `src/etl/config/settings.json` (hoy 9). Pendiente de confirmar. |
+| 16 | 13.9 y 13.10 | Req. 13 fija una rutina guardada inmutable, pero el cliente puede pedir cambios tras verla. | `ajustar_rutina` reemplaza la rutina de la recomendación mientras esté `pendiente` (mismo `rec_id` y código; se agregan `version` y `fecha_actualizacion`). Una recomendación `atendida` no se modifica. |
+| 17 | 3.7 y 23.8 | El CSV v2 trae 64 productos sin `Funcion` y filas duplicadas (ficha padre sin precio y ficha hija con precio). | Se fusionan por SKU y el paso se infiere con reglas editables (`paso_inferido=true`). Se agregan motivos de omisión `fuera_de_alcance` (no es cuidado facial) y `sin_inventario`. |
+| 18 | 7.3 a 7.8 | La guía del negocio define 3 preguntas, 4 segmentos y niveles de precio distintos a los supuestos iniciales (800/2000). | El asesor sigue la guía; las fronteras de precio salen de ella (1,300 y 3,500) y sus 64 combinaciones curadas son una preferencia, no una receta, porque el catálogo no las contiene todas. |
 
 ## Puntos abiertos para confirmar
 

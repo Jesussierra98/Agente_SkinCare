@@ -1,0 +1,5 @@
+[tool.pytest.ini_options]
+# Los paquetes del backend no son instalables: se agregan al path para las pruebas.
+pythonpath = ["src/agent", "src/etl", "src/caja_api"]
+testpaths = ["tests"]
+addopts = "-q"

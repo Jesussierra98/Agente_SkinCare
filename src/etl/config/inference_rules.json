@@ -1,0 +1,12 @@
+{
+  "_nota": "Reglas para asignar el paso cuando la columna Funcion viene VACÍA (unos 64 productos, sobre todo Sisley y Clinique). Se evalúan en orden y gana la primera que coincida. Cada regla puede pedir: 'tipo' (columna Tipo producto, cualquiera de la lista) y/o 'nombre' (expresión regular sobre el nombre). 'paso' puede ser uno de los 4 pasos o 'excluir'. Editar aquí sin tocar código.",
+  "rules": [
+    { "nombre": "(make-?up remover|remover|cleansing|cleanser|face wash|foaming|foam|soap|lyslait|eau efficace|scrub|exfoliat|desmaquill)", "paso": "Limpieza" },
+    { "nombre": "(toning|tonic|clarifying|softener|re-?balancing)", "paso": "Limpieza" },
+    { "tipo": ["Desmaquillantes", "Espumas", "Jabones", "Exfoliantes", "Leches", "Barras"], "paso": "Limpieza" },
+    { "tipo": ["Protectores solares", "Protectores"], "paso": "Protección solar" },
+    { "tipo": ["Sueros", "Mascarillas", "Bálsamos"], "paso": "Tratamiento" },
+    { "tipo": ["Geles"], "nombre": "(tenseur|serum|sérum|lift)", "paso": "Tratamiento" },
+    { "tipo": ["Cremas", "Lociones", "Emulsiones", "Aceites", "Geles"], "paso": "Hidratación" }
+  ]
+}

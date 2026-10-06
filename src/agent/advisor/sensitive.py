@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 import unicodedata
 
 
@@ -12,17 +11,24 @@ def _norm(text: str) -> str:
     return "".join(ch for ch in nfkd if not unicodedata.combining(ch))
 
 
-# Condiciones sensibles (Req. 9.1): se prefieren falsos positivos a falsos negativos.
+# Condiciones sensibles (Req. 9.1): embarazo, lactancia, heridas y afecciones de la piel. Se prefieren
+# falsos positivos a falsos negativos. La alergia va aparte (ver ALLERGY_TERMS).
 SENSITIVE_TERMS: tuple[str, ...] = (
     "embaraz", "estoy esperando bebe", "lactanc", "amamant",
     "pregnan", "breastfeed", "nursing",
-    "alergia", "alergic", "reaccion alergica", "me da alergia",
-    "allergy", "allergic", "allergies",
     "acne quistico", "acne severo", "acne cistico", "cystic acne", "severe acne",
     "herida", "lastimad", "sangr", "pus ", " pus", "infeccion", "infectad",
     "wound", "bleeding", "infection", "infected",
     "psoriasis", "dermatitis", "rosacea", "eczema", "eccema", "melanoma", "lunar sospechos",
     "quemadura", "burn ",
+)
+
+# Alergia mencionada: solo es una condición grave si viene con señales de gravedad; si no, suele ser
+# "esa marca o ingrediente me da alergia" y el cliente quiere otra opción.
+ALLERGY_TERMS: tuple[str, ...] = ("alergia", "alergic", "allerg")
+SEVERITY_TERMS: tuple[str, ...] = (
+    "severa", "grave", "fuerte", "hinch", "ronch", "urticaria", "anafil", "respirar", "inflam", "ampolla", "dolor",
+    "severe", "serious", "swell", "hive", "breath", "blister", "pain",
 )
 
 # Solicitud de diagnóstico / tratamiento clínico (Req. 9.2).
@@ -41,19 +47,30 @@ COMPATIBILITY_TERMS: tuple[str, ...] = (
 )
 
 
-def detect(text: str) -> str | None:
-    """Devuelve el motivo de derivación si el texto lo requiere, o `None`.
+def detect_with_term(text: str) -> tuple[str, str] | None:
+    """`(motivo, término)` si el texto requiere derivación, o `None`.
 
-    Motivos: `condicion_sensible`, `diagnostico`, `compatibilidad`.
+    Motivos: `condicion_sensible` (suspende las recomendaciones), `alergia_producto` (avisa al asesor pero
+    el cliente puede seguir cambiando de producto), `diagnostico` y `compatibilidad`.
     """
     t = f" {_norm(text)} "
-    if any(term in t for term in SENSITIVE_TERMS):
-        return "condicion_sensible"
-    if any(term in t for term in DIAGNOSIS_TERMS):
-        return "diagnostico"
-    if any(term in t for term in COMPATIBILITY_TERMS):
-        return "compatibilidad"
+    for term in SENSITIVE_TERMS:
+        if term in t:
+            return "condicion_sensible", term.strip()
+    allergy = next((term for term in ALLERGY_TERMS if term in t), None)
+    if allergy:
+        severe = next((s for s in SEVERITY_TERMS if s in t), None)
+        return ("condicion_sensible", f"{allergy}+{severe}") if severe else ("alergia_producto", allergy)
+    for term in DIAGNOSIS_TERMS:
+        if term in t:
+            return "diagnostico", term
+    for term in COMPATIBILITY_TERMS:
+        if term in t:
+            return "compatibilidad", term
     return None
 
 
-_WORD = re.compile(r"[a-záéíóúñü']+")
+def detect(text: str) -> str | None:
+    """Solo el motivo de derivación (o `None`)."""
+    found = detect_with_term(text)
+    return found[0] if found else None

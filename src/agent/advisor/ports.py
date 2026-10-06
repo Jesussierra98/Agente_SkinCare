@@ -26,6 +26,12 @@ class RecommendationStore(Protocol):
     async def put(self, recommendation: dict[str, Any]) -> None:
         """Guarda una recomendación completa. Debe fallar si el `rec_id` ya existe."""
 
+    async def update_routine(self, rec_id: str, rutina: list[dict[str, Any]], fecha: str) -> None:
+        """Reemplaza la rutina de una recomendación que sigue `pendiente` (mismo código y QR).
+
+        Debe fallar si no existe o si ya fue atendida.
+        """
+
 
 class HandoffNotifier(Protocol):
     async def notify(self, session_id: str, motivo: str, perfil: dict[str, Any]) -> None:

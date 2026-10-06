@@ -30,6 +30,12 @@ def load_catalog(path: Path) -> dict[str, Product]:
             modo_uso=row.get("modo_uso", ""),
             imagen_url=row.get("imagen_url", ""),
             detalle=row.get("detalle", ""),
+            funcion_original=row.get("funcion_original", ""),
+            tipo_producto=row.get("tipo_producto", ""),
+            sublinea=row.get("sublinea", ""),
+            coleccion=row.get("coleccion", ""),
+            genero=row.get("genero", ""),
+            inventario=row.get("inventario"),
         )
         products[p.sku] = p
     return products
@@ -64,6 +70,17 @@ class InMemoryRecommendations:
             raise ValueError("rec_id duplicado")
         self.items[rec_id] = recommendation
         log.info("recomendación guardada: %s (%s)", recommendation["codigo_corto"], rec_id)
+
+    async def update_routine(self, rec_id: str, rutina: list[dict[str, Any]], fecha: str) -> None:
+        rec = self.items.get(rec_id)
+        if rec is None:
+            raise KeyError("recomendación inexistente")
+        if rec.get("estado") != "pendiente":
+            raise ValueError("la recomendación ya no está pendiente")
+        rec["rutina"] = rutina
+        rec["fecha_actualizacion"] = fecha
+        rec["version"] = int(rec.get("version", 1)) + 1
+        log.info("recomendación %s actualizada (versión %d)", rec["codigo_corto"], rec["version"])
 
 
 class LogNotifier:

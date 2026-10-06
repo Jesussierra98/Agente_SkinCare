@@ -45,6 +45,7 @@ class ProfileState:
     indicadores_sensibles: list[str] = field(default_factory=list)
     exchange_count: int = 0
     min_exchanges: int = MIN_EXCHANGES
+    tope_mxn: int = 0  # tope por producto si el cliente dijo una cifra (0 = sin tope)
 
     # ---- captura -------------------------------------------------------
     def apply(self, campo: str, valor: str) -> ApplyResult:
@@ -98,6 +99,7 @@ class ProfileState:
             "no_proporcionado": sorted(self.no_proporcionado),
             "indicadores_sensibles": list(self.indicadores_sensibles),
             "exchange_count": self.exchange_count,
+            **({"tope_por_producto_mxn": self.tope_mxn} if self.tope_mxn > 0 else {}),
         }
 
     # ---- internos ------------------------------------------------------
@@ -115,8 +117,8 @@ class ProfileState:
             low = v.lower()
             if low in {"ambiguo", "no sé", "no se", "unknown", "ambiguous", "n/a"}:
                 return None
-            # Valor único libre: sin enumeraciones.
-            if len(v) > 40 or "," in v or " y " in low or " and " in low or " o " in low:
+            # Valor único libre (frase corta): sin enumeraciones con comas.
+            if len(v) > 60 or "," in v:
                 return None
             return v
         if campo == "presupuesto":
@@ -135,6 +137,25 @@ class ProfileState:
     @classmethod
     def _is_valid(cls, campo: str, valor: str) -> bool:
         return cls._canonical(campo, valor) is not None
+
+
+# Palabras del catálogo asociadas a cada inquietud (para ordenar candidatos por relevancia).
+INQUIETUD_KEYWORDS: dict[str, str] = {
+    "brotes": "acné imperfecciones brotes poros grasa sebo purifica",
+    "manchas": "manchas hiperpigmentación luminosidad ilumina uniforme tono vitamina",
+    "hidratacion": "hidrata hidratación humecta humedad sequedad agua ácido hialurónico",
+    "primeras_lineas": "líneas finas expresión antiedad renueva retinol péptidos",
+    "arrugas_profundas/firmeza": "arrugas firmeza reafirma elasticidad lifting volumen antiedad",
+}
+
+
+def profile_query(valores: dict[str, str]) -> str:
+    """Texto de búsqueda derivado del perfil (inquietud + textura) para ordenar candidatos."""
+    parts = [INQUIETUD_KEYWORDS.get(valores.get("inquietud", ""), "")]
+    textura = valores.get("textura", "")
+    if textura:
+        parts.append(textura)
+    return " ".join(p for p in parts if p).strip()
 
 
 def tier_for_price(precio: Decimal, bounds: tuple[Decimal, Decimal]) -> str:

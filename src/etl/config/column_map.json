@@ -1,0 +1,22 @@
+{
+  "_nota": "Alias de encabezados del CSV (insensible a mayúsculas y acentos). Validado con feeder-skincare-catalog_v2.csv: SKU, Nombre, Url, Imagen, Funcion, Tipodepiel, Genero, Precio, Oferta, Beneficios, Marca, Ingredientes, Tipo producto, Sublinea, Detalle, modo de uso, coleccion, ean, inventario.",
+  "sku": ["sku", "codigo", "clave"],
+  "nombre": ["nombre", "nombre del producto", "producto", "name"],
+  "marca": ["marca", "brand"],
+  "funcion": ["funcion", "función"],
+  "tipo_piel": ["tipodepiel", "tipo de piel", "tipo_piel", "tipo piel"],
+  "precio": ["precio", "precio mxn", "price"],
+  "beneficios": ["beneficios", "benefits"],
+  "ingredientes": ["ingredientes", "ingredients"],
+  "modo_uso": ["modo de uso", "modo_uso", "uso", "how to use"],
+  "imagen_url": ["imagen", "imagen_url", "url imagen", "image"],
+  "producto_url": ["url", "producto_url", "url producto", "link"],
+  "detalle": ["detalle", "descripcion", "descripción", "details"],
+  "coleccion": ["coleccion", "colección", "collection"],
+  "genero": ["genero", "género", "gender"],
+  "tipo_producto": ["tipo producto", "tipo_producto", "tipo de producto"],
+  "sublinea": ["sublinea", "sublínea", "linea", "línea"],
+  "ean": ["ean", "gtin", "codigo de barras"],
+  "inventario": ["inventario", "stock", "existencias"],
+  "oferta": ["oferta", "promocion", "promoción"]
+}

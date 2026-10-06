@@ -34,6 +34,7 @@ from strands.bidi.types.events import (
 from advisor import language as lang
 from advisor import sensitive
 from advisor.config import load_config
+from advisor.guide import Guide
 from advisor.local import InMemoryRecommendations, JsonCatalog, LogNotifier
 from advisor.nudges import TEXT as NUDGE_TEXT, decide_nudge
 from advisor.prompts import GREETING_PROMPT, HANDOFF_INSTRUCTIONS, SYSTEM_PROMPT
@@ -54,6 +55,7 @@ bedrock = boto3.client(
     config=BotoConfig(read_timeout=10, retries={"max_attempts": 1}),
 )
 engine = RoutineEngine(catalog, cfg.routine_model_id, bedrock)
+guide = Guide.load(cfg.guide_path)
 deps = Deps(
     catalog=catalog,
     store=store,
@@ -61,6 +63,7 @@ deps = Deps(
     engine=engine,
     budget_bounds=cfg.budget_bounds,
     store_domain=cfg.store_domain,
+    guide=guide,
 )
 
 app = FastAPI(title="Skincare voice advisor (local prototype)")
@@ -84,6 +87,9 @@ async def ws_endpoint(ws: WebSocket) -> None:
     async def send(message: dict[str, Any]) -> None:
         if closed:
             return
+        if message.get("type") == "routine":
+            # Rutina nueva o ajustada en pantalla: el asesor aún debe contarla.
+            state["spoke_after_routine"] = False
         try:
             async with send_lock:
                 await ws.send_json(message)
@@ -126,15 +132,17 @@ async def ws_endpoint(ws: WebSocket) -> None:
         current = session.language.update(text)
         if current != previous:
             await send({"type": "language", "language": current})
-        motivo = sensitive.detect(text)
-        if motivo and not (session.handoff and session.handoff.get("motivo") == motivo):
-            log.warning("detector local: %s", motivo)
+        found = sensitive.detect_with_term(text)
+        if found and not (session.handoff and session.handoff.get("motivo") == found[0]):
+            motivo, term = found
+            log.warning("detector local: motivo=%s término=%r frase=%r", motivo, term, text[:160])
             if motivo == "condicion_sensible":
                 session.profile.add_sensitive_indicator("condicion_sensible")
-            # Corta lo que el modelo esté diciendo y descarta el audio de esa respuesta.
-            await send({"type": "interrupt"})
-            if state["in_response"]:
-                state["block_audio"] = True
+            if motivo != "alergia_producto":
+                # Corta lo que el modelo esté diciendo y descarta el audio de esa respuesta.
+                await send({"type": "interrupt"})
+                if state["in_response"]:
+                    state["block_audio"] = True
             await start_handoff(session, notifier, motivo)
             instruction = HANDOFF_INSTRUCTIONS[motivo][session.language.current]
             await agent.send(instruction)
@@ -232,10 +240,14 @@ async def ws_endpoint(ws: WebSocket) -> None:
             if rol == "asesor" and state["block_audio"]:
                 return
             await send({"type": "transcript", "role": rol, "text": text, "final": True})
+            log.info("%s dijo: %s", "CLIENTE" if rol == "cliente" else "ASESOR", text[:300].replace("\n", " "))
             if rol == "asesor" and session.routine_at is not None:
                 state["spoke_after_routine"] = True
             if rol == "cliente":
                 await handle_user_text(text)
+        elif type(event).__name__ == "ToolResultEvent":
+            result = getattr(event, "tool_result", None) or {}
+            log.info("resultado herramienta [%s]: %s", result.get("status"), json.dumps(result.get("content"), ensure_ascii=False, default=str)[:600])
         elif isinstance(event, BidiToolUseBlocksEvent):
             for tool_use in event.tool_uses:
                 log.info("herramienta: %s %s", tool_use.get("name"), json.dumps(tool_use.get("input"), ensure_ascii=False))

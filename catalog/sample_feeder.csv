@@ -1,0 +1,12 @@
+SKU,Nombre,Marca,Funcion,Tipo de piel,Precio,Beneficios,Ingredientes,Modo de uso,Imagen,URL,Detalle
+"000375947","Gel limpiador suave","clinique ","Gel Limpiador","Grasa","$520.00","<ul><li>Limpia sin resecar</li><li>Ayuda a reducir brotes</li></ul>","Agua, Glicerina","<p>Aplica sobre piel h˙meda.</p><p>Enjuaga.</p>","https://img.example/1.jpg","https://ultrafemme.example/p/1","<b>Nuevo</b>"
+"000375948","S√©rum de niacinamida","LANCOME","Suero antimanchas","Todo tipo de piel","1,249.50","Unifica el tono<br/>Minimiza poros","Niacinamida","Usa de noche","","",""
+"000375949","Crema de dÌa hidratante","ISDIN","Crema de dia","Seca","899 MXN","HidrataciÛn de 24 horas","Ceramidas","MaÒana y noche","","",""
+"000375950","Protector solar FPS 50","La Roche-Posay","  PROTECTOR SOLAR FLUIDO ","Mixta","$ 790.00","ProtecciÛn de amplio espectro","Filtros UVA/UVB","Reaplica cada 2 horas","","",""
+"000375950","Protector solar FPS 50 (actualizado)","La Roche-Posay","Protector solar fluido","Mixta","$ 810.00","ProtecciÛn de amplio espectro","Filtros UVA/UVB","Reaplica cada 2 horas","","",""
+"000375951","Perfume de prueba","ACME","Fragancia","","1500","","","","","",""
+"000375952","Producto sin precio","ACME","Gel limpiador","","consultar","","","","","",""
+"000375953","Producto carÌsimo","ACME","Gel limpiador","","1000000.00","","","","","",""
+"","Sin SKU","ACME","Gel limpiador","","100","","","","","",""
+"000375954","Mascarilla","NOVE","Mascarilla","Todo tipo de piel","350","<<b>p>Hidrata</p>","","","","",""
+"000375955","Fila daÅada","ACME","Gel limpiador","","100","","","","","",""

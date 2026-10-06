@@ -10,7 +10,7 @@ from typing import Literal
 
 from .session import Session
 
-Nudge = Literal["armar", "presentar"]
+Nudge = Literal["armar", "presentar", "ajuste"]
 
 MAX_NUDGES = 3
 MIN_SECONDS_BETWEEN = 15.0
@@ -25,6 +25,18 @@ TEXT: dict[Nudge, dict[str, str]] = {
         "en": (
             "[Internal instruction] You already have the customer's details and enough exchanges. "
             "Call armar_rutina right now and then present the routine by voice. Do not ask more profile questions."
+        ),
+    },
+    "ajuste": {
+        "es": (
+            "[Instrucción interna] La rutina ya se actualizó en la pantalla del cliente con el cambio que pidió. "
+            "Dile ahora, breve, qué producto cambió (marca y por qué) y el total aproximado, y pregunta si así está bien. "
+            "No repitas los pasos que no cambiaron."
+        ),
+        "en": (
+            "[Internal instruction] The routine has been updated on the customer's screen with the change they asked for. "
+            "Now briefly tell them which product changed (brand and why) and the approximate total, and ask if that works. "
+            "Do not repeat the steps that did not change."
         ),
     },
     "presentar": {
@@ -58,5 +70,5 @@ def decide_nudge(
     if session.routine is None:
         return "armar" if session.profile.listo_para_proponer() else None
     if not spoke_after_routine and session.routine_at is not None and now - session.routine_at >= PRESENT_AFTER_S:
-        return "presentar"
+        return "ajuste" if session.routine_change == "ajuste" else "presentar"
     return None

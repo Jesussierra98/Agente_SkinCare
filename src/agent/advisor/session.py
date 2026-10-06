@@ -48,6 +48,13 @@ class Session:
     recommendations_suspended: bool = False
     handoff: dict[str, Any] | None = None
     tools_running: int = 0  # herramientas largas en ejecución (el vigilante no interviene)
+    rejected_skus: set[str] = field(default_factory=set)  # productos que el cliente no quiso (no se repiten)
+    avoided_brands: set[str] = field(default_factory=set)  # marcas que el cliente no quiere (plegadas: minúsculas, sin acentos)
+    adjustments: int = 0
+    level: str | None = None  # nivel de precio vigente de la guía: "$", "$$" o "$$$"
+    total_cap: Decimal | None = None  # tope del total que dijo el cliente (persiste entre ajustes)
+    product_cap: Decimal | None = None  # tope por producto que dijo el cliente en un ajuste
+    routine_change: str = "inicial"  # "inicial" | "ajuste": qué cambió la última vez
     routine_at: float | None = None  # instante (monotónico) en que se armó la rutina
 
     def new_rec_id(self) -> str:

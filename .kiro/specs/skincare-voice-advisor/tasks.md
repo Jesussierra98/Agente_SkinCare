@@ -21,13 +21,13 @@ Notas de orden:
 
 ## Tasks
 
-- [ ] 1. Preparar el repositorio y las herramientas base
+- [x] 1. Preparar el repositorio y las herramientas base
   - [x] 1.1 Crear la estructura de carpetas y la configuración de proyecto
     - Crear `cloudformation/`, `src/etl/`, `src/agent/`, `src/caja_api/`, `src/frontend/`, `catalog/`, `scripts/`.
     - Agregar `.gitignore` (Python, Node, `.env`, artefactos de build) y `README.md` con el orden de despliegue y cómo correr las pruebas.
     - Crear `.kiro/project-spec.json` con el nombre del proyecto y la región `us-east-1`.
     - _Requirements: 22.1, 22.3_
-  - [ ] 1.2 Configurar el entorno Python y las pruebas
+  - [x] 1.2 Configurar el entorno Python y las pruebas
     - Crear `pyproject.toml` (o `requirements-dev.txt`) con versiones fijas de `pytest`, `hypothesis`, `moto`, `freezegun`, `ftfy`, `boto3`, `jsonschema`.
     - Crear `conftest.py` con un perfil de Hypothesis de 100 iteraciones mínimo.
     - _Requirements: 1.2, 2.1_
@@ -47,7 +47,7 @@ Notas de orden:
     - Construir `LoginScreen`, `OperationalScreen` y `RoutineResult` con un `MockCajaApi` que devuelva la rutina de ejemplo para el código `ABC-234`, un código inexistente (404) y un estado ATENDIDA.
     - El botón "MARCAR COMO ATENDIDA Y COMPLETAR DESPACHO" cambia el estado en memoria. Sin Cognito ni API real.
     - _Requirements: 19.1, 19.2, 20.1, 20.2, 20.3, 20.4, 20.5, 20.6_
-  - [ ] 1.6 Checkpoint visual: revisar el diseño del front con el usuario
+  - [x] 1.6 Checkpoint visual: revisar el diseño del front con el usuario
     - Comparar cada pantalla con las imágenes de `.kiro/specs/skincare-voice-advisor/design/` y reportar qué coincide y qué no se pudo verificar (fuentes y colores exactos). Resolver con el usuario la tabla "Diferencias por resolver" de `ui-reference.md`.
     - Levantar el prototipo y mostrar cómo se ve y cómo funciona cada pantalla. Recoger ajustes de diseño (colores, textos, distribución, idioma de los rótulos) antes de construir el backend.
     - Pendiente de confirmar en esta revisión: si los rótulos del Kiosco deben ser bilingües y el texto del encabezado de Req. 20.1.
@@ -66,11 +66,11 @@ Notas de orden:
     - Agregar al frontend el cliente WebSocket y la captura/reproducción de audio (`micCapture`, `playback`, worklets PCM16) y un interruptor para elegir entre `MockVoiceSession` y la sesión real local (`ws://localhost:8080/ws`).
     - Validar de punta a punta en el navegador: hablar en español e inglés, ver la transcripción, recibir la rutina con productos de muestra, ver el QR y el código, y probar una frase sensible para ver la derivación.
     - _Requirements: 5.1, 5.5, 5.6, 6.1, 6.8, 18.1, 18.2_
-  - [ ] 1.10 Checkpoint del prototipo de voz
+  - [x] 1.10 Checkpoint del prototipo de voz
     - Probar la conversación real con el usuario. Registrar latencia percibida, calidad de la voz en español e inglés, comportamiento del barge-in y ajustes al prompt. Decidir con el usuario los cambios antes de pasar al catálogo real y a la arquitectura completa.
 
 - [ ] 2. Fase 1: Pipeline de catálogo (ETL local)
-  - [ ] 2.1 Implementar la decodificación y reparación de codificación
+  - [x] 2.1 Implementar la decodificación y reparación de codificación
     - En `src/etl/core/encoding.py`: `decode_rows(data: bytes) -> (rows, skipped)` con UTF-8 estricto (BOM opcional) y, si falla, lectura `latin-1` sin pérdida con reinterpretación por campo (UTF-8 estricto, luego cp1252 estricto). Las filas no decodificables se omiten y se reportan con número de fila base 1 (encabezado = fila 1).
     - Implementar `fix_mojibake(s)` con `ftfy.fix_encoding` repetido hasta punto fijo (máximo 3 iteraciones) sin cambiar comillas, ligaduras ni normalización Unicode.
     - Leer con el módulo `csv` y conservar todo como texto (el SKU `000375947` no pierde ceros).
@@ -80,7 +80,7 @@ Notas de orden:
     - **Property 2: La corrección de codificación es idempotente y no altera texto limpio**
     - **Property 3: La decodificación de filas omite exactamente las filas inválidas y produce UTF-8 limpio**
     - **Validates: Requirements 1.2, 1.3, 1.4, 1.5**
-  - [ ] 2.3 Implementar la sanitización de HTML
+  - [x] 2.3 Implementar la sanitización de HTML
     - En `src/etl/core/html.py`: `sanitize_html(v)` que convierte `li` y `p` en saltos de línea, `br` en salto, elimina `ul` y `b` (insensible a mayúsculas, con atributos y formas de apertura, cierre y autocierre), repite hasta que no quede etiqueta objetivo (caso `<<b>p>`), colapsa a lo más 2 saltos consecutivos y recorta extremos.
     - Devolver sin cambios valores no textuales, vacíos o sin etiquetas objetivo.
     - _Requirements: 2.1, 2.2, 2.3, 2.4, 2.5, 2.6_
@@ -88,13 +88,13 @@ Notas de orden:
     - **Property 4: La sanitización de HTML elimina etiquetas, conserva el texto y es idempotente**
     - **Property 5: La sanitización de HTML es la identidad cuando no hay etiquetas objetivo**
     - **Validates: Requirements 2.1, 2.2, 2.3, 2.4, 2.5**
-  - [ ] 2.5 Implementar clasificación, normalización y validación de productos
+  - [x] 2.5 Implementar clasificación, normalización y validación de productos
     - En `src/etl/core/`: `classify_funcion(funcion, mapping)` (`strip().casefold()`), `normalize_brand(s, aliases)`, `normalize_skin_type(s)` (Grasa, Seca, Mixta, Todo tipo de piel; desconocido se registra y pasa a Todo tipo de piel), `parse_price(s)` (`Decimal`, 2 decimales `ROUND_HALF_UP`, rango 0 a 999,999.99) y `build_product(row, cfg)` que devuelve el producto con los 12 atributos del Diccionario más `detalle`, o un motivo de omisión (`sku_invalido`, `paso_no_mapeado`, `precio_invalido`).
     - Conservar `funcion_original` sin cambios y registrar SKU y valor cuando `Funcion` no esté mapeada o esté vacía.
     - Crear `column_map` (encabezados insensibles a mayúsculas y acentos) y `brand_aliases` como archivos de configuración versionados.
     - _Requirements: 3.1, 3.6, 3.7, 4.5, 23.1, 23.5, 23.6, 23.8, 23.9_
-  - [ ] 2.6 Generar el mapa `Funcion → paso` con el CSV real
-    - Pendiente de confirmación: el archivo `catalog/feeder-skincare-catalog.csv` no está en el repositorio. Pedirlo al usuario antes de esta tarea.
+  - [x] 2.6 Generar el mapa `Funcion → paso` con el CSV real
+    - Hecho con el CSV real (`src/etl/feeder-skincare-catalog.csv`, 137 filas, 50 variantes de `Funcion`). Quedan decisiones de criterio por confirmar con el negocio: ver `_a_confirmar` en `src/etl/config/funcion_map.json`.
     - Listar los valores distintos de `Funcion` y los encabezados reales, y producir `funcion_map.json` (unas 50 variantes) y `column_map.json`.
     - _Requirements: 3.2, 3.3, 3.4, 3.5_
   - [ ]* 2.7 Pruebas de propiedad de clasificación y validación
@@ -102,7 +102,7 @@ Notas de orden:
     - **Property 7: La normalización de marca es invariante a variantes de escritura e idempotente**
     - **Property 8: La validación de productos acepta solo SKUs, pasos y precios válidos**
     - **Validates: Requirements 3.1, 3.6, 3.7, 4.5, 23.1, 23.5, 23.6, 23.8, 23.9**
-  - [ ] 2.8 Generar los artefactos de la Knowledge Base
+  - [x] 2.8 Generar los artefactos de la Knowledge Base
     - `render_kb_markdown(p)` con el formato del diseño (nombre, SKU, marca, paso, tipo de piel, precio, Beneficios, Ingredientes, Detalle), un documento por SKU.
     - `render_kb_metadata(p)` que devuelve `{"metadataAttributes": {"paso_rutina", "tipo_piel", "marca", "precio"}}` con los mismos valores del registro.
     - Claves exactas: `productos/{sku}.md` y `productos/{sku}.md.metadata.json` (DD-09).
@@ -110,12 +110,12 @@ Notas de orden:
   - [ ]* 2.9 Prueba de propiedad de artefactos de la KB
     - **Property 9: Los artefactos de la Knowledge Base son consistentes con el registro**
     - **Validates: Requirements 4.1, 4.2, 4.3**
-  - [ ] 2.10 Implementar el script local `etl_catalog.py`
+  - [x] 2.10 Implementar el script local `etl_catalog.py`
     - Ejecuta el núcleo puro sobre un CSV local, genera `catalog_normalized.json`, imprime el resumen por paso en consola, y escribe los archivos `productos/{sku}.md` y `.md.metadata.json` en una carpeta local.
     - Registrar filas omitidas (con número) y productos omitidos (con SKU y motivo).
     - Entregable visible de la Fase 1.
     - _Requirements: 1.1, 1.6, 3.1, 4.2, 4.3_
-  - [ ] 2.11 Implementar el handler de la ETL_Lambda (capa de I/O)
+  - [x] 2.11 Implementar el handler de la ETL_Lambda (capa de I/O)
     - En `src/etl/handler.py`: leer el objeto `raw/*.csv`, decodificar, construir productos, escribir en paralelo (hasta 32 hilos) `PutItem` en `ultra-productos` y los dos objetos de la KB por SKU, y escribir `normalized/{archivo}.csv` en UTF-8 (no modificar `raw/`).
     - Un SKU repetido conserva la última fila y registra advertencia. Un fallo por SKU se registra y el proceso continúa, terminando en falla al final.
     - Llamar a `bedrock-agent:StartIngestionJob` una sola vez si se escribió al menos un SKU; si falla, registrar descripción y nombre del CSV, conservar lo escrito y terminar en falla.
@@ -173,6 +173,17 @@ Notas de orden:
     - Verificar en `us-east-1` el ID exacto del perfil de inferencia y el soporte de `outputConfig.textFormat`. Registrar el resultado en el README y ajustar `ROUTINE_MODEL_ID`. Requiere credenciales AWS (usar la skill `signing-in-to-aws` si hace falta).
     - _Requirements: 10.1, 10.2_
 
+  - [x] 4.9 Ajuste de la rutina por el cliente (extensión pedida tras las pruebas)
+    - Herramienta `ajustar_rutina`: `mas_barato`, `mas_premium` u `otro_producto`, por paso o para toda la rutina, con tope por producto (`precio_maximo_mxn`), tope del total (`total_maximo_mxn`) y una preferencia libre.
+    - La rutina se actualiza en la misma recomendación mientras siga `pendiente`: el QR y el código no cambian y la pantalla se actualiza sola. Los productos rechazados no se repiten y los topes dichos por el cliente persisten entre ajustes.
+    - El código verifica el presupuesto (`fit_total`) y responde con honestidad cuando no hay alternativas o no cabe (`minimo_posible_mxn`). Máximo 8 ajustes por sesión.
+    - El asesor lee frases ya armadas con datos del catálogo (`frase`) para no inventar datos al presentar.
+    - _Requirements: 10.1, 10.3, 11.2, 13.1_
+  - [x] 4.10 Guía de recomendación y ajuste flexible (segunda ronda tras pruebas)
+    - ETL v2: fusión de filas padre/hija (SKU duplicado), paso inferido para productos sin `Funcion` (`inference_rules.json`), filtro de alcance facial, limpieza de HTML más amplia y campos nuevos (tipo de producto, línea, EAN, inventario).
+    - `build_guide.py` convierte el Excel de la guía en `guide.json`; el asesor sigue su embudo de preguntas, sus niveles de precio ($ hasta 1,300; ) hasta 3,500; )$ más) y prioriza sus combinaciones curadas.
+    - `ajustar_rutina` acepta varios pasos (`pasos`), cambia lo que tenga buena alternativa y deja igual lo demás, elige sustitutos por parecido (mismo tipo de producto, misma marca, precio cercano) y no cambia nada si el tope ya se cumple.
+    - _Requirements: 3.1, 4.1, 7.3, 7.4, 7.5, 10.1_
 - [ ] 5. Fase 5 (adelantada): Herramienta_Guardar y Consultor_PubMed como librerías
   - [ ] 5.1 Implementar validación y generación de código
     - En `src/agent/save.py`: `validate_routine_for_save` (pura) con exactamente 4 objetos, `paso` entero 1 a 4 sin repetidos, campos `str` requeridos y `precio` 0 a 999,999.99 con máximo 2 decimales.
