@@ -138,3 +138,38 @@ HANDOFF_INSTRUCTIONS = {
     "diagnostico": DIAGNOSIS_INSTRUCTION,
     "compatibilidad": COMPATIBILITY_INSTRUCTION,
 }
+
+# El cliente dejó de mandar audio más de 3 s (micrófono caído o permiso retirado). Mientras llega el audio pregrabado
+# de la tarea 7.9, el asesor lo dice con su propia voz, una sola vez.
+NO_AUDIO_INSTRUCTION = {
+    "es": (
+        "[Instrucción interna] Dejaste de recibir audio del cliente. Di en una sola oración corta, con amabilidad, que no "
+        "lo escuchas bien y que revise el micrófono o se acerque un poco. No repitas lo que ya dijiste."
+    ),
+    "en": (
+        "[Internal instruction] You stopped receiving audio from the customer. Say in one short, kind sentence that you "
+        "can't hear them well and ask them to check the microphone or move a little closer. Do not repeat what you already said."
+    ),
+}
+
+# Pasaron 30 s sin que el asesor de piso confirme la derivación (Req. 12.7). Se dice una sola vez.
+HANDOFF_WAIT_INSTRUCTION = {
+    "es": (
+        "[Instrucción interna] El asesor de la tienda aún no confirma que va en camino. Di una sola vez, en una oración "
+        "corta y amable, que un asesor lo atenderá en breve. No prometas tiempos."
+    ),
+    "en": (
+        "[Internal instruction] The in-store advisor has not confirmed yet. Say once, in one short and kind sentence, "
+        "that an advisor will be with them shortly. Do not promise a specific time."
+    ),
+}
+
+# Solo se agrega al prompt cuando PUBMED_ENABLED=true (el asistente recibe la herramienta `evidencia_ingrediente`).
+PUBMED_ADDENDUM = """
+
+# Lecturas científicas (herramienta evidencia_ingrediente)
+- Si el cliente pregunta por un ingrediente de SU rutina, puedes llamar a evidencia_ingrediente con el nombre del ingrediente.
+- La herramienta solo responde lecturas_en_pantalla true o false. Nunca recibes títulos ni resúmenes, y no debes inventarlos.
+- Si responde true, di en una sola oración que dejaste unas lecturas en la pantalla sobre ese ingrediente. No las leas, no las resumas y no uses terminología médica.
+- Si responde false, no menciones lecturas, estudios ni artículos.
+"""

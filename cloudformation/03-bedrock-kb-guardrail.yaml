@@ -1,0 +1,186 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  ultra-skincare-bedrock: Guardrail ultra-skincare-guardrail (temas clínicos denegados), bucket e índice de S3 Vectors,
+  Knowledge Base con Titan Text Embeddings V2 y su fuente de datos sobre el bucket KB source (prefijo productos/).
+
+Resources:
+  # ------------------------------------------------------------------------------------------- Guardrail
+  Guardrail:
+    Type: AWS::Bedrock::Guardrail
+    Properties:
+      Name: ultra-skincare-guardrail
+      Description: Bloquea diagnóstico médico y dictámenes de incompatibilidad química entre activos o marcas.
+      # Mensajes cortos y sin repetir lo bloqueado. El asesor da su propio aviso amable al derivar.
+      BlockedInputMessaging: Para eso lo mejor es que te atienda una asesora de la tienda.
+      BlockedOutputsMessaging: Para eso lo mejor es que te atienda una asesora de la tienda.
+      TopicPolicyConfig:
+        TopicsConfig:
+          # Los nombres los usa el agente para elegir el motivo de derivación (advisor/guardrail.py).
+          - Name: diagnostico_medico
+            Type: DENY
+            Definition: >-
+              Diagnóstico médico, prescripción dermatológica o tratamiento de patologías de la piel, como psoriasis,
+              dermatitis o rosácea clínica.
+            Examples:
+              - Tengo manchas rojas con costras, ¿qué enfermedad es?
+              - ¿Qué crema me cura la psoriasis?
+              - ¿Esta dermatitis se quita con algún tratamiento?
+              - Can you diagnose my rash and tell me what medication to use?
+          - Name: incompatibilidad_quimica
+            Type: DENY
+            Definition: >-
+              Dictamen sobre si es seguro o peligroso mezclar o combinar activos cosméticos o productos de distintas
+              marcas, o sobre su incompatibilidad química.
+            Examples:
+              - ¿Puedo usar retinol puro y ácido glicólico juntos?
+              - ¿Es peligroso mezclar vitamina C con niacinamida?
+              - Is it safe to combine these two brands' serums?
+  GuardrailVersion:
+    # Una versión numerada: el agente la usa en lugar de DRAFT para que el comportamiento no cambie sin aviso.
+    Type: AWS::Bedrock::GuardrailVersion
+    Properties:
+      GuardrailIdentifier: !GetAtt Guardrail.GuardrailId
+      Description: Versión inicial
+
+  # ----------------------------------------------------------------------------------------- S3 Vectors
+  VectorBucket:
+    Type: AWS::S3Vectors::VectorBucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      VectorBucketName: !Sub "ultra-skincare-vectors-${AWS::AccountId}-${AWS::Region}"
+  VectorIndex:
+    Type: AWS::S3Vectors::Index
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      VectorBucketArn: !GetAtt VectorBucket.VectorBucketArn
+      IndexName: productos
+      DataType: float32
+      Dimension: 1024 # Titan Text Embeddings V2
+      DistanceMetric: cosine
+      MetadataConfiguration:
+        # Bedrock guarda el texto del fragmento y su metadata como atributos; deben ser no filtrables.
+        NonFilterableMetadataKeys:
+          - AMAZON_BEDROCK_TEXT
+          - AMAZON_BEDROCK_METADATA
+
+  # ------------------------------------------------------------------------------------- Knowledge Base
+  KnowledgeBaseRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: ultra-skincare-kb-role
+      Description: Rol de servicio de la Knowledge Base (lee el bucket KB source y escribe en el índice de vectores)
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: bedrock.amazonaws.com
+            Action: "sts:AssumeRole"
+            Condition:
+              StringEquals:
+                "aws:SourceAccount": !Ref AWS::AccountId
+              ArnLike:
+                "aws:SourceArn": !Sub "arn:${AWS::Partition}:bedrock:${AWS::Region}:${AWS::AccountId}:knowledge-base/*"
+      Policies:
+        - PolicyName: ultra-skincare-kb-policy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: Embeddings
+                Effect: Allow
+                Action: "bedrock:InvokeModel"
+                Resource: !Sub "arn:${AWS::Partition}:bedrock:${AWS::Region}::foundation-model/amazon.titan-embed-text-v2:0"
+              - Sid: LeerDocumentos
+                Effect: Allow
+                Action: "s3:GetObject"
+                Resource: !Sub
+                  - "${Bucket}/productos/*"
+                  - Bucket: !ImportValue ultra-skincare-storage:KbSourceBucketArn
+              - Sid: ListarDocumentos
+                Effect: Allow
+                Action: "s3:ListBucket"
+                Resource: !ImportValue ultra-skincare-storage:KbSourceBucketArn
+                Condition:
+                  StringLike:
+                    "s3:prefix": "productos/*"
+              - Sid: DescifrarDocumentos
+                Effect: Allow
+                Action:
+                  - "kms:Decrypt"
+                  - "kms:DescribeKey"
+                Resource: !ImportValue ultra-skincare-storage:DataKeyArn
+              - Sid: IndiceDeVectores
+                Effect: Allow
+                Action:
+                  - "s3vectors:GetIndex"
+                  - "s3vectors:PutVectors"
+                  - "s3vectors:GetVectors"
+                  - "s3vectors:QueryVectors"
+                  - "s3vectors:ListVectors"
+                  - "s3vectors:DeleteVectors"
+                Resource: !GetAtt VectorIndex.IndexArn
+
+  KnowledgeBase:
+    Type: AWS::Bedrock::KnowledgeBase
+    Properties:
+      Name: ultra-skincare-kb
+      Description: Catálogo de productos de skincare (un documento por SKU)
+      RoleArn: !GetAtt KnowledgeBaseRole.Arn
+      KnowledgeBaseConfiguration:
+        Type: VECTOR
+        VectorKnowledgeBaseConfiguration:
+          EmbeddingModelArn: !Sub "arn:${AWS::Partition}:bedrock:${AWS::Region}::foundation-model/amazon.titan-embed-text-v2:0"
+          EmbeddingModelConfiguration:
+            BedrockEmbeddingModelConfiguration:
+              Dimensions: 1024
+              EmbeddingDataType: FLOAT32
+      StorageConfiguration:
+        Type: S3_VECTORS
+        S3VectorsConfiguration:
+          IndexArn: !GetAtt VectorIndex.IndexArn
+
+  DataSource:
+    Type: AWS::Bedrock::DataSource
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      Name: ultra-skincare-kb-source
+      KnowledgeBaseId: !Ref KnowledgeBase
+      DataDeletionPolicy: RETAIN
+      DataSourceConfiguration:
+        Type: S3
+        S3Configuration:
+          BucketArn: !ImportValue ultra-skincare-storage:KbSourceBucketArn
+          InclusionPrefixes:
+            - productos/
+      VectorIngestionConfiguration:
+        ChunkingConfiguration:
+          ChunkingStrategy: NONE # un documento por SKU = un fragmento
+
+Outputs:
+  GuardrailId:
+    Value: !GetAtt Guardrail.GuardrailId
+    Export:
+      Name: !Sub "${AWS::StackName}:GuardrailId"
+  GuardrailArn:
+    Value: !GetAtt Guardrail.GuardrailArn
+    Export:
+      Name: !Sub "${AWS::StackName}:GuardrailArn"
+  GuardrailVersion:
+    Value: !GetAtt GuardrailVersion.Version
+    Export:
+      Name: !Sub "${AWS::StackName}:GuardrailVersion"
+  KnowledgeBaseId:
+    Value: !GetAtt KnowledgeBase.KnowledgeBaseId
+    Export:
+      Name: !Sub "${AWS::StackName}:KnowledgeBaseId"
+  KnowledgeBaseArn:
+    Value: !GetAtt KnowledgeBase.KnowledgeBaseArn
+    Export:
+      Name: !Sub "${AWS::StackName}:KnowledgeBaseArn"
+  DataSourceId:
+    Value: !GetAtt DataSource.DataSourceId
+    Export:
+      Name: !Sub "${AWS::StackName}:DataSourceId"

@@ -1,0 +1,170 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  ultra-skincare-frontend: CloudFront con OAC delante del bucket de hosting, HTTPS obligatorio, política del bucket
+  (lectura solo para esta distribución) y cabeceras de seguridad (CSP y Permissions-Policy de micrófono y cámara).
+
+Parameters:
+  ImageHosts:
+    Type: String
+    Default: ""
+    AllowedPattern: "^[A-Za-z0-9*:/.\\- ]*$"
+    Description: >-
+      Hosts desde los que se cargan las imágenes de producto, separados por espacio (por ejemplo
+      "https://cdn.tienda.com https://*.tienda.com"). Vacío = solo imágenes propias y data:/blob:.
+  CustomDomainName:
+    Type: String
+    Default: ""
+    Description: Dominio propio (por ejemplo asesor.tienda.com). Vacío = dominio *.cloudfront.net.
+  CertificateArn:
+    Type: String
+    Default: ""
+    Description: >-
+      Certificado de ACM en us-east-1 para CustomDomainName. Sin certificado propio CloudFront usa su certificado
+      predeterminado, que NO permite exigir TLS 1.2 como mínimo.
+
+Conditions:
+  HasCustomDomain: !And
+    - !Not [!Equals [!Ref CustomDomainName, ""]]
+    - !Not [!Equals [!Ref CertificateArn, ""]]
+
+Resources:
+  OriginAccessControl:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name: ultra-skincare-hosting-oac
+        Description: Acceso de CloudFront al bucket de hosting
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  SecurityHeaders:
+    Type: AWS::CloudFront::ResponseHeadersPolicy
+    Properties:
+      ResponseHeadersPolicyConfig:
+        Name: ultra-skincare-security-headers
+        Comment: Cabeceras de seguridad de la Vista_Cliente y la Vista_Caja
+        SecurityHeadersConfig:
+          StrictTransportSecurity:
+            AccessControlMaxAgeSec: 63072000
+            IncludeSubdomains: true
+            Override: true
+          ContentTypeOptions:
+            Override: true
+          FrameOptions:
+            FrameOption: DENY
+            Override: true
+          ReferrerPolicy:
+            ReferrerPolicy: strict-origin-when-cross-origin
+            Override: true
+          ContentSecurityPolicy:
+            Override: true
+            ContentSecurityPolicy: !Join
+              - "; "
+              - - "default-src 'self'"
+                - "script-src 'self'"
+                - "style-src 'self' 'unsafe-inline'"
+                - "font-src 'self' data:"
+                - !Sub "img-src 'self' data: blob: ${ImageHosts}"
+                - "media-src 'self' blob:"
+                - "worker-src 'self' blob:"
+                - !Sub
+                  - "connect-src 'self' wss://bedrock-agentcore.${AWS::Region}.amazonaws.com https://cognito-idp.${AWS::Region}.amazonaws.com ${ApiUrl}"
+                  - ApiUrl: !ImportValue ultra-skincare-compute:ApiUrl
+                - "frame-ancestors 'none'"
+                - "base-uri 'self'"
+                - "form-action 'self'"
+                - "object-src 'none'"
+        CustomHeadersConfig:
+          Items:
+            - Header: Permissions-Policy
+              Value: microphone=(self), camera=(self)
+              Override: true
+
+  Distribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Comment: ultra-skincare (Kiosco y Caja)
+        Enabled: true
+        HttpVersion: http2and3
+        IPV6Enabled: true
+        PriceClass: PriceClass_100
+        DefaultRootObject: index.html
+        Aliases: !If
+          - HasCustomDomain
+          - [!Ref CustomDomainName]
+          - !Ref AWS::NoValue
+        Origins:
+          - Id: hosting
+            DomainName: !ImportValue ultra-skincare-storage:HostingBucketDomainName
+            OriginAccessControlId: !GetAtt OriginAccessControl.Id
+            S3OriginConfig:
+              OriginAccessIdentity: ""
+        DefaultCacheBehavior:
+          TargetOriginId: hosting
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods: [GET, HEAD]
+          CachedMethods: [GET, HEAD]
+          Compress: true
+          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6 # CachingOptimized (administrada por AWS)
+          ResponseHeadersPolicyId: !Ref SecurityHeaders
+        # Es una SPA: las rutas (/caja) no existen como archivos; S3 responde 403 y se devuelve index.html.
+        CustomErrorResponses:
+          - ErrorCode: 403
+            ResponseCode: 200
+            ResponsePagePath: /index.html
+            ErrorCachingMinTTL: 0
+          - ErrorCode: 404
+            ResponseCode: 200
+            ResponsePagePath: /index.html
+            ErrorCachingMinTTL: 0
+        ViewerCertificate: !If
+          - HasCustomDomain
+          - AcmCertificateArn: !Ref CertificateArn
+            SslSupportMethod: sni-only
+            MinimumProtocolVersion: TLSv1.2_2021
+          - CloudFrontDefaultCertificate: true
+
+  HostingBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !ImportValue ultra-skincare-storage:HostingBucketName
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: SoloHTTPS
+            Effect: Deny
+            Principal: "*"
+            Action: "s3:*"
+            Resource:
+              - !ImportValue ultra-skincare-storage:HostingBucketArn
+              - !Sub
+                - "${Bucket}/*"
+                - Bucket: !ImportValue ultra-skincare-storage:HostingBucketArn
+            Condition:
+              Bool:
+                "aws:SecureTransport": "false"
+          - Sid: LecturaSoloParaCloudFront
+            Effect: Allow
+            Principal:
+              Service: cloudfront.amazonaws.com
+            Action: "s3:GetObject"
+            Resource: !Sub
+              - "${Bucket}/*"
+              - Bucket: !ImportValue ultra-skincare-storage:HostingBucketArn
+            Condition:
+              StringEquals:
+                "AWS:SourceArn": !Sub "arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:distribution/${Distribution}"
+
+Outputs:
+  DistributionId:
+    Value: !Ref Distribution
+  DistributionDomainName:
+    Value: !GetAtt Distribution.DomainName
+  FrontendOrigin:
+    Description: Valor de FrontendOrigin para volver a desplegar el stack compute (CORS de la API).
+    Value: !If
+      - HasCustomDomain
+      - !Sub "https://${CustomDomainName}"
+      - !Sub "https://${Distribution.DomainName}"

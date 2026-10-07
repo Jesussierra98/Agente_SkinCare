@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import secrets
+import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -49,6 +50,7 @@ class Session:
     handoff: dict[str, Any] | None = None
     tools_running: int = 0  # herramientas largas en ejecución (el vigilante no interviene)
     readings: list[dict[str, Any]] = field(default_factory=list)  # lecturas de PubMed mostradas en pantalla
+    created_at: int = field(default_factory=lambda: int(time.time()))  # época; la sesión vence a las 24 h
     rejected_skus: set[str] = field(default_factory=set)  # productos que el cliente no quiso (no se repiten)
     avoided_brands: set[str] = field(default_factory=set)  # marcas que el cliente no quiere (plegadas: minúsculas, sin acentos)
     adjustments: int = 0

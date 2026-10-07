@@ -217,25 +217,25 @@ Notas de orden:
 
 - [ ] 7. Fase 3: Agente de voz (Runtime_Agente)
   - Nota: parte de esta fase ya existe como prototipo local (tarea 1.8). Aquí se completa el agente de producción: se reemplazan las implementaciones en memoria por DynamoDB, Knowledge Base y SNS (misma interfaz), y se agregan TurnGate, Guardrail, renovación de conexión, watchdogs, autenticación JWT y el empaquetado en AgentCore.
-  - [ ] 7.1 Implementar la configuración del agente
+  - [x] 7.1 Implementar la configuración del agente (`advisor/config.py`; corregido: `NOVA_RESTART_AFTER_S=0.5` ya no se trunca a 0; agregados `GUARDRAIL_ID`, `GUARDRAIL_VERSION`, `KB_ID`, `PUBMED_ENABLED` y `missing_production_settings`)
     - En `src/agent/config.py`: lectura de variables de entorno con valores seguros. `ENDPOINTING_SENSITIVITY` ∈ {HIGH, MEDIUM, LOW} (otro valor usa MEDIUM y registra); `NOVA_RESTART_AFTER_S` con 0 < n < 480 (otro valor usa 420 y registra); `NOVA_VOICE_ID` ∈ {tiffany, matthew}; `OUTPUT_SAMPLE_RATE` ∈ {16000, 24000}; `GUARDRAIL_ID`, `GUARDRAIL_VERSION`, `KB_ID`, `ROUTINE_MODEL_ID`, `BUDGET_TIER_BOUNDS_MXN`, `PUBMED_ENABLED`, `STORE_DOMAIN`.
     - _Requirements: 5.10, 6.2, 24.4_
-  - [ ]* 7.2 Prueba de propiedad de configuración
+  - [x]* 7.2 Prueba de propiedad de configuración (`tests/test_runtime_parts.py`)
     - **Property 12: La lectura de configuración siempre produce un valor seguro**
     - **Validates: Requirements 6.2, 24.4**
-  - [ ] 7.3 Implementar `SessionStore` y `SessionState`
+  - [x] 7.3 Implementar `SessionStore` y `SessionState` (`advisor/session_store.py`; falta llamarlo desde el servidor en cada cambio de la sesión)
     - En `src/agent/session.py`: `SessionState` (perfil, intercambios, candidatos reducidos, rutina, lecturas, idioma, derivación, `recommendations_suspended`, `messages` acotado a 200 KiB y 50 KiB por mensaje, `created_at`, `ttl`).
     - Persistir en `ultra-sesiones` en cada cambio con `ttl = created_at + 86400`. `load(session_id, now)` trata como inexistente una sesión con `now >= created_at + 86400` y devuelve error "iniciar nueva sesión".
     - _Requirements: 21.8, 21.11, 24.5, 24.6_
-  - [ ]* 7.4 Pruebas de propiedad de sesión
+  - [x]* 7.4 Pruebas de propiedad de sesión (`tests/test_runtime_parts.py`)
     - **Property 17: El contexto de sesión se conserva en el almacenamiento y en la renovación**
     - **Property 18: Una sesión es válida exactamente durante sus primeras 24 horas**
     - **Validates: Requirements 21.8, 21.11, 24.5, 24.6**
-  - [ ] 7.5 Implementar `LanguageTracker` y `SensitiveConditionDetector`
+  - [x] 7.5 Implementar `LanguageTracker` y `SensitiveConditionDetector` (`advisor/language.py`, `advisor/sensitive.py`)
     - `LanguageTracker` puro: cuenta palabras funcionales EN/ES por turno, en empate conserva el idioma anterior.
     - `SensitiveConditionDetector`: léxico ES/EN (embarazo, embarazada, pregnant, alergia severa, allergic reaction, acné quístico, cystic acne, herida, wound, psoriasis, dermatitis, rosácea, pus, sangrado, etc.), insensible a mayúsculas y acentos, prefiere falsos positivos.
     - _Requirements: 5.4, 9.1, 9.2_
-  - [ ]* 7.6 Pruebas de propiedad de idioma y detector
+  - [x]* 7.6 Pruebas de propiedad de idioma y detector (`tests/test_sensitive_language.py`)
     - **Property 13: El idioma vigente sigue al idioma del último turno del cliente**
     - **Property 22: El detector de condiciones sensibles reconoce todo el léxico**
     - **Validates: Requirements 5.4, 9.1**
@@ -248,32 +248,32 @@ Notas de orden:
     - **Property 21: Las herramientas solo manejan productos del catálogo devueltos en la sesión**
     - **Property 23: Un indicador sensible impide generar y presentar rutina** (parte de suspensión en sesión)
     - **Validates: Requirements 8.1, 8.4, 9.4, 9.5**
-  - [ ] 7.9 Implementar Guardrail, TurnGate y audios pregrabados
+  - [~] 7.9 Implementar Guardrail, TurnGate y audios pregrabados (hecho `advisor/guardrail.py`: `GuardrailClient`, `TurnGate` y los textos de bloqueo; CONECTADO a `server.py` (`advisor/runtime.py`): con `GUARDRAIL_ID` y `GUARDRAIL_VERSION` el turno espera la decisión antes de seguir y la salida del asesor se evalúa por oración; el Motor_Rutina usa el mismo Guardrail en todas sus llamadas. El bloqueo lo dice el asesor con su propia voz (instrucción interna), NO con audio pregrabado. FALTAN el script que genera los audios pregrabados, crear el Guardrail real en el stack 03 y probarlo con un Guardrail real. Supuesto a confirmar: un bloqueo deriva con motivo `diagnostico`, o `compatibilidad` si el tema bloqueado es la mezcla química)
     - `GuardrailClient` con `ApplyGuardrail` (INPUT y OUTPUT), timeout 3 s.
     - `TurnGate`: al llegar la transcripción final del cliente lanza en paralelo `ApplyGuardrail(INPUT)` y el detector; retiene el audio del modelo hasta la decisión (máximo 3 s). Solo el resultado `aprobado` deja pasar el audio. Intervención, detección sensible, timeout o error: descartar audio, enviar `interrupt`, reproducir el audio pregrabado del idioma vigente (≤200 caracteres, sin repetir lo bloqueado) e iniciar la derivación. Evaluar también la transcripción del asesor por oración con `ApplyGuardrail(OUTPUT)`.
     - Script de build que genera los audios pregrabados ES/EN con la misma voz (bloqueo, derivación, "no te escucho", "la conversación va a terminar", "acuda al mostrador", "un asesor lo atenderá en breve").
     - _Requirements: 12.3, 12.4, 12.6, 9.2, 24.10_
-  - [ ]* 7.10 Prueba de propiedad del TurnGate
+  - [x]* 7.10 Prueba de propiedad del TurnGate (`tests/test_runtime_parts.py`)
     - **Property 26: El TurnGate falla cerrado ante cualquier resultado del Guardrail que no sea aprobación**
     - **Validates: Requirements 12.3, 12.4, 12.6**
-  - [ ] 7.11 Implementar `HandoffService`
+  - [~] 7.11 Implementar `HandoffService` (hecho `advisor/handoff.py`: aviso por SNS con registro en `ultra-sesiones` y espera de confirmación cada 2 s hasta 30 s. CONECTADO a `server.py` con `HANDOFF_TOPIC_ARN` y `SESSIONS_TABLE`: tras 30 s sin confirmación el asesor virtual lo dice una vez. FALTAN probarlo con un tópico SNS real y el canal final del personal, que se configura como suscripción del tópico)
     - Escribir el registro de derivación en `ultra-sesiones` (motivo, perfil, hora, `estado="pendiente"`) y publicar en SNS `ultra-skincare-handoff` con motivo, perfil, `session_id` y enlace de confirmación, en ≤3 s. Emitir el evento `handoff`.
     - Sin notificación en 10 s: reproducir "acuda al mostrador de asesoría en piso" y fijar `recommendations_suspended = true`. Sin confirmación en 30 s (consulta cada 2 s): reproducir una vez "un asesor lo atenderá en breve" y mantener la derivación activa.
     - `condicion_sensible` y `requiere_asesor` suspenden recomendaciones; `diagnostico` y `compatibilidad` no.
     - Pendiente de confirmar con el usuario: canal real del personal de piso (correo, SMS o chat con webhook) y si se acepta la pantalla mínima de confirmación (DD-14).
     - _Requirements: 9.1, 9.3, 9.5, 9.7, 9.8, 12.7_
-  - [ ]* 7.12 Pruebas de propiedad de derivación
+  - [x]* 7.12 Pruebas de propiedad de derivación (`tests/test_runtime_parts.py`, `tests/test_session_handoff.py`)
     - **Property 24: La derivación respeta los plazos de 10 s y 30 s**
     - **Property 25: La derivación entrega el motivo y el perfil sin cambios**
     - **Validates: Requirements 9.7, 9.8, 12.7**
-  - [ ] 7.13 Implementar el `SessionSupervisor` y los watchdogs
+  - [~] 7.13 Implementar el `SessionSupervisor` y los watchdogs (hecho `advisor/watchdog.py`: watchdog de audio de entrada, medidor de `ResponseLatencyMs` y línea EMF. CONECTADO a `server.py`: el watchdog avisa una sola vez tras más de 3 s sin audio (el cliente avisa con `mute` cuando se silencia a propósito), la latencia sale por stdout en formato EMF y la sesión se guarda si hay `SESSIONS_TABLE`. FALTA la renovación de conexión con su temporizador de 5 s)
     - Watchdog de audio de entrada: más de 3 s sin marcos `audio` detiene la salida (`interrupt`), reproduce una vez "no te escucho" y conserva el estado.
     - Barge-in: ante `BidiInterruptionEvent` envía `interrupt` al cliente.
     - Renovación: escuchar `BidiConnectionRestartEvent`, actualizar `ultra-sesiones`, mantener el WebSocket abierto, temporizador de 5 s con `connection_error(renewal_failed)` y audio "la conversación va a terminar"; repetir `endpointingSensitivity` en cada conexión y repetir el perfil en el prompt restaurado.
     - Métrica `ResponseLatencyMs` en CloudWatch EMF.
     - Cierre por `hangup` o cierre del WebSocket: `promptEnd` y `sessionEnd`.
     - _Requirements: 6.8, 6.9, 24.1, 24.2, 24.3, 24.5, 24.9, 24.10, 24.11, 5.2_
-  - [ ]* 7.14 Prueba de propiedad del watchdog
+  - [x]* 7.14 Prueba de propiedad del watchdog (`tests/test_runtime_parts.py`)
     - **Property 16: El watchdog de audio de entrada se dispara solo tras más de 3 s de silencio del flujo**
     - **Validates: Requirements 6.9**
   - [ ] 7.15 Implementar el endpoint WebSocket `/ws`
@@ -394,26 +394,26 @@ Notas de orden:
   - Ejecutar Vitest y revisar manualmente las pantallas con el usuario antes del empaquetado.
 
 - [ ] 13. Fase 6: Infraestructura como código
-  - [ ] 13.1 Stack `01-base-storage-db.yaml` (`ultra-skincare-storage`)
+  - [x] 13.1 Stack `01-base-storage-db.yaml` (`ultra-skincare-storage`) (escrito y validado con cfn-lint; NO desplegado. Desviaciones: los buckets llevan el ID de cuenta y la región en el nombre para ser únicos; hosting y logs usan SSE-S3 porque OAC y la entrega de logs no funcionan bien con una llave del cliente; el bucket raw habilita EventBridge)
     - 4 buckets S3 (hosting, logs, raw data, KB source) con `PublicAccessBlock` y cifrado, 4 tablas DynamoDB on-demand (`ultra-productos`, `ultra-recomendaciones` con GSI `codigo_corto-index`, `ultra-sesiones` con TTL en `ttl`, `ultra-evidencias-ingredientes` con TTL), llave KMS y un Budget con alerta. `CAPABILITY_NAMED_IAM`.
     - _Requirements: 21.7, 22.3, 22.5, 22.6, 23.1, 23.4_
-  - [ ] 13.2 Stack `02-auth-cognito.yaml` (`ultra-skincare-auth`)
+  - [x] 13.2 Stack `02-auth-cognito.yaml` (`ultra-skincare-auth`) (escrito y validado; NO desplegado)
     - User Pool `ultra-skincare-userpool` sin autorregistro, grupos `kiosco` y `caja`, app clients `KioscoClient` (`USER_PASSWORD_AUTH`, `REFRESH_TOKEN_AUTH`, access token 60 min) y `CajaClient` (`USER_SRP_AUTH`, `REFRESH_TOKEN_AUTH`).
     - _Requirements: 21.1, 21.3, 22.3_
-  - [ ] 13.3 Stack `03-bedrock-kb-guardrail.yaml` (`ultra-skincare-bedrock`)
+  - [x] 13.3 Stack `03-bedrock-kb-guardrail.yaml` (`ultra-skincare-bedrock`) (escrito y validado; NO desplegado. Los nombres de los temas del Guardrail coinciden con `advisor/guardrail.py`. Verificar en el primer despliegue que la Knowledge Base acepte S3 Vectors con las propiedades usadas)
     - Guardrail `ultra-skincare-guardrail` con los temas denegados de 4.7, bucket e índice de S3 Vectors, Knowledge Base (Titan Text Embeddings V2) y data source sobre el bucket KB source, prefijo `productos/`, `ChunkingStrategy: NONE`.
     - _Requirements: 12.1, 12.2, 22.3_
-  - [ ] 13.4 Stack `04-api-and-lambdas.yaml` (`ultra-skincare-compute`)
+  - [x] 13.4 Stack `04-api-and-lambdas.yaml` (`ultra-skincare-compute`) (escrito y validado; NO desplegado. Desviación: el ETL se dispara por EventBridge con un patrón `raw/*.csv` en lugar de una notificación de S3, para no crear una dependencia circular entre stacks. El CORS necesita el dominio de CloudFront, que solo existe tras el stack 05: `deploy.ps1` vuelve a desplegar este stack con el dominio real. Pendiente verificar en el spike 7.17 los permisos de AgentCore del rol del Runtime)
     - ETL_Lambda (evento S3 con `prefix=raw/` y `suffix=.csv`), `ultra-caja-lambda`, HTTP API con JWT Authorizer (audiencia: ambos clientes, DD-13) y CORS limitado al dominio de CloudFront, repositorio ECR `ultra-skincare-agent`, tópico SNS `ultra-skincare-handoff`, secreto de PubMed y roles IAM con nombre de mínimo privilegio (`ultra-skincare-etl-role`, `ultra-skincare-caja-role`, `ultra-skincare-agent-runtime-role`). `CAPABILITY_NAMED_IAM`.
     - _Requirements: 21.5, 21.9, 22.3, 22.5, 22.7, 22.8, 22.12_
-  - [ ] 13.5 Stack `05-frontend-hosting.yaml` (`ultra-skincare-frontend`)
+  - [x] 13.5 Stack `05-frontend-hosting.yaml` (`ultra-skincare-frontend`) (escrito y validado; NO desplegado. LIMITACIÓN: `TLSv1.2_2021` solo se aplica con certificado propio (`CustomDomainName` + `CertificateArn`); con el dominio `*.cloudfront.net` CloudFront ignora el mínimo de TLS, así que el Req. 21.10 exige un dominio propio)
     - CloudFront con OAC, política de bucket, redirección HTTP→HTTPS, `MinimumProtocolVersion: TLSv1.2_2021`, cabeceras de seguridad (CSP con `connect-src` a `wss://bedrock-agentcore.us-east-1.amazonaws.com`, Cognito y la API; `Permissions-Policy: microphone=(self), camera=(self)`).
     - _Requirements: 21.6, 21.7, 21.10, 22.3_
-  - [ ] 13.6 Scripts de despliegue
+  - [~] 13.6 Scripts de despliegue (hecho `scripts/deploy.ps1` y `scripts/package_lambdas.py`: confirmación previa, orden de los 5 stacks, parada con stack y causa, empaquetado de las Lambdas. FALTAN: `deploy.sh`, construir y publicar la imagen del agente, `agentcore deploy` y el smoke test (7.16). El script tiene sintaxis válida pero NO se ha ejecutado contra una cuenta real)
     - `scripts/deploy.ps1` y `scripts/deploy.sh` que corran `aws cloudformation deploy` en el orden storage → auth → bedrock → compute → frontend, se detengan ante una falla nombrando stack y causa, y después construyan y publiquen la imagen en ECR, ejecuten `agentcore deploy` con las variables de entorno y lancen `smoke_test.py`.
     - Antes de desplegar en una cuenta AWS real, mostrar al usuario qué recursos se crearán y pedir confirmación.
     - _Requirements: 22.4, 22.9, 22.10, 22.11, 22.13_
-  - [ ]* 13.7 Validación de plantillas
+  - [~]* 13.7 Validación de plantillas (hecho `tests/test_cloudformation.py`: cfn-lint sobre los 5 stacks y 26 aserciones sobre nombres, cifrado, IAM sin comodines, HTTPS, OAC y exportaciones entre stacks. FALTA cfn-guard, que no se instaló)
     - `cfn-lint` y `cfn-guard` (sin comodines IAM, HTTPS, OAC, bloqueo público) y pruebas de aserciones sobre las plantillas: nombres de stacks, grupos, clientes, TTL, GSI.
     - _Requirements: 21.6, 21.7, 21.9, 22.3_
 

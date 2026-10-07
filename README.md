@@ -122,6 +122,22 @@ milisegundos. Es la medición de las herramientas, no de la conversación comple
 ni del audio. Mientras corre la herramienta, el asesor queda en silencio unos 3 s; conviene que diga una frase corta
 antes de llamarla (por ejemplo "déjame armar tu rutina").
 
+## Piezas de producción del agente (opcionales)
+
+Sin variables de AWS el agente sigue siendo local, como en el prototipo. Cada pieza se activa solo si están TODAS sus
+variables; `GET /health` muestra en `piezas` cuáles quedaron activas.
+
+| Pieza | Variables |
+|---|---|
+| Recomendaciones en DynamoDB | `RECOMMENDATIONS_TABLE` |
+| Aviso al asesor por SNS y espera de confirmación | `HANDOFF_TOPIC_ARN` y `SESSIONS_TABLE` (opcional `HANDOFF_CONFIRM_BASE_URL`) |
+| Sesión guardada en cada cambio | `SESSIONS_TABLE` |
+| Guardrail en la entrada, la salida y el Motor_Rutina | `GUARDRAIL_ID` y `GUARDRAIL_VERSION` |
+| Lecturas de PubMed | `PUBMED_ENABLED=true` (opcionales `EVIDENCE_TABLE` y `NCBI_API_KEY`) |
+
+Con el Guardrail activo, un turno solo pasa si el Guardrail aprueba y no se detecta una condición sensible; cualquier
+error o tiempo agotado lo bloquea y deriva al asesor.
+
 ## Caja con la API real
 
 Por defecto la Caja usa datos simulados. Para hablar con Cognito y la API de Caja, crea `src/frontend/.env.local`
@@ -136,6 +152,25 @@ VITE_STORE_DOMAIN=tienda.ejemplo.com   # opcional: solo acepta QR de ese dominio
 
 Si falta cualquiera de las tres primeras, se usa la API simulada. El inicio de sesión usa SRP (la contraseña no viaja
 en claro) y la sesión vive en `sessionStorage`. La cámara exige HTTPS o `localhost`. Pruebas del frontend: `npm test`.
+
+## Infraestructura (CloudFormation)
+
+Las plantillas están en `cloudformation/` y pasan `cfn-lint`, pero **todavía no se han desplegado en ninguna cuenta**.
+
+```powershell
+# Solo valida las plantillas (no llama a AWS)
+& $env:LOCALAPPDATA\skincare-venv\Scripts\cfn-lint.exe cloudformation\*.yaml
+
+# Despliegue: muestra la cuenta y los recursos, y pide confirmación antes de tocar AWS
+.\scripts\deploy.ps1 -BudgetAlertEmail finanzas@tienda.com -HandoffEmail piso@tienda.com
+```
+
+Puntos a tener en cuenta:
+- El mínimo de TLS 1.2 de CloudFront solo se aplica con dominio y certificado propios (`-CustomDomainName`, `-CertificateArn`).
+- El CORS de la API necesita el dominio de CloudFront, que solo existe después del stack frontend: el script vuelve a
+  desplegar el stack compute con el dominio real.
+- El contenedor del agente no es parte de los 5 stacks; se despliega aparte en AgentCore (tareas 7.15 a 7.17).
+- Buckets, tablas, User Pool y repositorio ECR tienen `DeletionPolicy: Retain`: borrar un stack no borra los datos.
 
 ## Orden de despliegue (cuando exista la infraestructura)
 

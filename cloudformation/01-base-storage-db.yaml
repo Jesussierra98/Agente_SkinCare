@@ -1,0 +1,385 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  ultra-skincare-storage: 4 buckets S3 (hosting, logs, raw data, KB source), 4 tablas DynamoDB on-demand,
+  llave KMS y un Budget con alerta. Primer stack del orden storage, auth, bedrock, compute, frontend.
+
+Parameters:
+  BudgetLimitUsd:
+    Type: Number
+    Default: 100
+    MinValue: 1
+    Description: Límite mensual del Budget en USD. Las alertas avisan al 80 % del gasto real y al 100 % del pronosticado.
+  BudgetAlertEmail:
+    Type: String
+    AllowedPattern: "^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$"
+    ConstraintDescription: Escribe un correo válido.
+    Description: Correo que recibe las alertas del Budget.
+
+Resources:
+  # ------------------------------------------------------------------------------------------ cifrado
+  # Una llave para S3 (raw y KB source) y DynamoDB. Hosting y logs usan SSE-S3: CloudFront (OAC) y la entrega de
+  # logs de S3 no se llevan bien con una llave administrada por el cliente.
+  DataKey:
+    Type: AWS::KMS::Key
+    Properties:
+      Description: Llave de ultra-skincare para S3 y DynamoDB
+      EnableKeyRotation: true
+      KeyPolicy:
+        Version: "2012-10-17"
+        Statement:
+          # Delega el acceso en IAM: cada rol declara sus permisos de kms:* sobre ESTA llave. Es la política de
+          # llave predeterminada de AWS; no concede acceso a nadie fuera de la cuenta.
+          - Sid: HabilitarIAMEnLaCuenta
+            Effect: Allow
+            Principal:
+              AWS: !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:root"
+            Action: "kms:*"
+            Resource: "*"
+  DataKeyAlias:
+    Type: AWS::KMS::Alias
+    Properties:
+      AliasName: alias/ultra-skincare-data
+      TargetKeyId: !Ref DataKey
+
+  # --------------------------------------------------------------------------------------------- buckets
+  LogsBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName: !Sub "ultra-skincare-logs-${AWS::AccountId}-${AWS::Region}"
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpirarLogs
+            Status: Enabled
+            ExpirationInDays: 90
+  LogsBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref LogsBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: SoloHTTPS
+            Effect: Deny
+            Principal: "*"
+            Action: "s3:*"
+            Resource:
+              - !GetAtt LogsBucket.Arn
+              - !Sub "${LogsBucket.Arn}/*"
+            Condition:
+              Bool:
+                "aws:SecureTransport": "false"
+          - Sid: EntregaDeLogsDeAccesoDeS3
+            Effect: Allow
+            Principal:
+              Service: logging.s3.amazonaws.com
+            Action: "s3:PutObject"
+            Resource: !Sub "${LogsBucket.Arn}/s3-access/*"
+            Condition:
+              StringEquals:
+                "aws:SourceAccount": !Ref AWS::AccountId
+
+  HostingBucket:
+    # Su política (lectura solo para CloudFront por OAC, más HTTPS obligatorio) vive en el stack frontend.
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName: !Sub "ultra-skincare-hosting-${AWS::AccountId}-${AWS::Region}"
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      LoggingConfiguration:
+        DestinationBucketName: !Ref LogsBucket
+        LogFilePrefix: s3-access/hosting/
+
+  RawBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName: !Sub "ultra-skincare-raw-${AWS::AccountId}-${AWS::Region}"
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - BucketKeyEnabled: true
+            ServerSideEncryptionByDefault:
+              SSEAlgorithm: aws:kms
+              KMSMasterKeyID: !GetAtt DataKey.Arn
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      VersioningConfiguration:
+        Status: Enabled
+      LoggingConfiguration:
+        DestinationBucketName: !Ref LogsBucket
+        LogFilePrefix: s3-access/raw/
+      # Los CSV subidos a raw/ disparan el ETL por EventBridge (regla en el stack compute). Se usa EventBridge y no
+      # una notificación directa para no crear una dependencia circular entre los stacks storage y compute.
+      NotificationConfiguration:
+        EventBridgeConfiguration:
+          EventBridgeEnabled: true
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpirarArtefactosViejos
+            Status: Enabled
+            Prefix: artifacts/
+            NoncurrentVersionExpiration:
+              NoncurrentDays: 30
+  RawBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref RawBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: SoloHTTPS
+            Effect: Deny
+            Principal: "*"
+            Action: "s3:*"
+            Resource:
+              - !GetAtt RawBucket.Arn
+              - !Sub "${RawBucket.Arn}/*"
+            Condition:
+              Bool:
+                "aws:SecureTransport": "false"
+
+  KbSourceBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName: !Sub "ultra-skincare-kb-source-${AWS::AccountId}-${AWS::Region}"
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - BucketKeyEnabled: true
+            ServerSideEncryptionByDefault:
+              SSEAlgorithm: aws:kms
+              KMSMasterKeyID: !GetAtt DataKey.Arn
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      VersioningConfiguration:
+        Status: Enabled
+      LoggingConfiguration:
+        DestinationBucketName: !Ref LogsBucket
+        LogFilePrefix: s3-access/kb-source/
+  KbSourceBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref KbSourceBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: SoloHTTPS
+            Effect: Deny
+            Principal: "*"
+            Action: "s3:*"
+            Resource:
+              - !GetAtt KbSourceBucket.Arn
+              - !Sub "${KbSourceBucket.Arn}/*"
+            Condition:
+              Bool:
+                "aws:SecureTransport": "false"
+
+  # ------------------------------------------------------------------------------------------- DynamoDB
+  ProductsTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      TableName: ultra-productos
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: sku
+          AttributeType: S
+      KeySchema:
+        - AttributeName: sku
+          KeyType: HASH
+      SSESpecification:
+        SSEEnabled: true
+        SSEType: KMS
+        KMSMasterKeyId: !GetAtt DataKey.Arn
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+
+  RecommendationsTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      TableName: ultra-recomendaciones
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: rec_id
+          AttributeType: S
+        - AttributeName: codigo_corto
+          AttributeType: S
+      KeySchema:
+        - AttributeName: rec_id
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: codigo_corto-index
+          KeySchema:
+            - AttributeName: codigo_corto
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+      SSESpecification:
+        SSEEnabled: true
+        SSEType: KMS
+        KMSMasterKeyId: !GetAtt DataKey.Arn
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+
+  SessionsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: ultra-sesiones
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: session_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: session_id
+          KeyType: HASH
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+      SSESpecification:
+        SSEEnabled: true
+        SSEType: KMS
+        KMSMasterKeyId: !GetAtt DataKey.Arn
+
+  EvidenceTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: ultra-evidencias-ingredientes
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: ingrediente
+          AttributeType: S
+      KeySchema:
+        - AttributeName: ingrediente
+          KeyType: HASH
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+      SSESpecification:
+        SSEEnabled: true
+        SSEType: KMS
+        KMSMasterKeyId: !GetAtt DataKey.Arn
+
+  # ---------------------------------------------------------------------------------------------- Budget
+  MonthlyBudget:
+    Type: AWS::Budgets::Budget
+    Properties:
+      Budget:
+        BudgetName: ultra-skincare-mensual
+        BudgetType: COST
+        TimeUnit: MONTHLY
+        BudgetLimit:
+          Amount: !Ref BudgetLimitUsd
+          Unit: USD
+      NotificationsWithSubscribers:
+        - Notification:
+            NotificationType: ACTUAL
+            ComparisonOperator: GREATER_THAN
+            Threshold: 80
+            ThresholdType: PERCENTAGE
+          Subscribers:
+            - SubscriptionType: EMAIL
+              Address: !Ref BudgetAlertEmail
+        - Notification:
+            NotificationType: FORECASTED
+            ComparisonOperator: GREATER_THAN
+            Threshold: 100
+            ThresholdType: PERCENTAGE
+          Subscribers:
+            - SubscriptionType: EMAIL
+              Address: !Ref BudgetAlertEmail
+
+Outputs:
+  DataKeyArn:
+    Value: !GetAtt DataKey.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}:DataKeyArn"
+  HostingBucketName:
+    Value: !Ref HostingBucket
+    Export:
+      Name: !Sub "${AWS::StackName}:HostingBucketName"
+  HostingBucketArn:
+    Value: !GetAtt HostingBucket.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}:HostingBucketArn"
+  HostingBucketDomainName:
+    Value: !GetAtt HostingBucket.RegionalDomainName
+    Export:
+      Name: !Sub "${AWS::StackName}:HostingBucketDomainName"
+  LogsBucketName:
+    Value: !Ref LogsBucket
+    Export:
+      Name: !Sub "${AWS::StackName}:LogsBucketName"
+  RawBucketName:
+    Value: !Ref RawBucket
+    Export:
+      Name: !Sub "${AWS::StackName}:RawBucketName"
+  RawBucketArn:
+    Value: !GetAtt RawBucket.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}:RawBucketArn"
+  KbSourceBucketName:
+    Value: !Ref KbSourceBucket
+    Export:
+      Name: !Sub "${AWS::StackName}:KbSourceBucketName"
+  KbSourceBucketArn:
+    Value: !GetAtt KbSourceBucket.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}:KbSourceBucketArn"
+  ProductsTableArn:
+    Value: !GetAtt ProductsTable.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}:ProductsTableArn"
+  RecommendationsTableArn:
+    Value: !GetAtt RecommendationsTable.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}:RecommendationsTableArn"
+  SessionsTableArn:
+    Value: !GetAtt SessionsTable.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}:SessionsTableArn"
+  EvidenceTableArn:
+    Value: !GetAtt EvidenceTable.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}:EvidenceTableArn"

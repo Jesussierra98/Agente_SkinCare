@@ -1,0 +1,103 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  ultra-skincare-auth: User Pool ultra-skincare-userpool sin autorregistro, grupos kiosco y caja, y exactamente dos
+  clientes públicos (KioscoClient y CajaClient).
+
+Resources:
+  UserPool:
+    Type: AWS::Cognito::UserPool
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      UserPoolName: ultra-skincare-userpool
+      DeletionProtection: ACTIVE
+      # Inicio de sesión por usuario y contraseña; solo un administrador crea cuentas (sin autorregistro).
+      AdminCreateUserConfig:
+        AllowAdminCreateUserOnly: true
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 12
+          RequireLowercase: true
+          RequireUppercase: true
+          RequireNumbers: true
+          RequireSymbols: true
+          TemporaryPasswordValidityDays: 3
+      AccountRecoverySetting:
+        RecoveryMechanisms:
+          - Name: admin_only
+            Priority: 1
+      MfaConfiguration: "OFF" # el usuario de servicio del Kiosco no puede responder un segundo factor
+
+  KioscoGroup:
+    Type: AWS::Cognito::UserPoolGroup
+    Properties:
+      GroupName: kiosco
+      UserPoolId: !Ref UserPool
+      Description: Dispositivos Kiosco (abren sesiones de voz)
+  CajaGroup:
+    Type: AWS::Cognito::UserPoolGroup
+    Properties:
+      GroupName: caja
+      UserPoolId: !Ref UserPool
+      Description: Cajeros y asesores (consultan y despachan recomendaciones)
+
+  KioscoClient:
+    # USER_PASSWORD_AUTH solo se usa una vez, para aprovisionar el dispositivo; después vive del refresh token.
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      ClientName: KioscoClient
+      UserPoolId: !Ref UserPool
+      GenerateSecret: false
+      ExplicitAuthFlows:
+        - ALLOW_USER_PASSWORD_AUTH
+        - ALLOW_REFRESH_TOKEN_AUTH
+      PreventUserExistenceErrors: ENABLED
+      EnableTokenRevocation: true
+      TokenValidityUnits:
+        AccessToken: minutes
+        RefreshToken: days
+      AccessTokenValidity: 60
+      RefreshTokenValidity: 365 # a calibrar
+  CajaClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      ClientName: CajaClient
+      UserPoolId: !Ref UserPool
+      GenerateSecret: false
+      ExplicitAuthFlows:
+        - ALLOW_USER_SRP_AUTH
+        - ALLOW_REFRESH_TOKEN_AUTH
+      PreventUserExistenceErrors: ENABLED
+      EnableTokenRevocation: true
+      TokenValidityUnits:
+        AccessToken: minutes
+        RefreshToken: days
+      AccessTokenValidity: 60
+      RefreshTokenValidity: 1
+
+Outputs:
+  UserPoolId:
+    Value: !Ref UserPool
+    Export:
+      Name: !Sub "${AWS::StackName}:UserPoolId"
+  UserPoolArn:
+    Value: !GetAtt UserPool.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}:UserPoolArn"
+  Issuer:
+    Description: Emisor de los tokens (también el que valida el JWT Authorizer y AgentCore Inbound Auth).
+    Value: !Sub "https://cognito-idp.${AWS::Region}.amazonaws.com/${UserPool}"
+    Export:
+      Name: !Sub "${AWS::StackName}:Issuer"
+  DiscoveryUrl:
+    Value: !Sub "https://cognito-idp.${AWS::Region}.amazonaws.com/${UserPool}/.well-known/openid-configuration"
+    Export:
+      Name: !Sub "${AWS::StackName}:DiscoveryUrl"
+  KioscoClientId:
+    Value: !Ref KioscoClient
+    Export:
+      Name: !Sub "${AWS::StackName}:KioscoClientId"
+  CajaClientId:
+    Value: !Ref CajaClient
+    Export:
+      Name: !Sub "${AWS::StackName}:CajaClientId"

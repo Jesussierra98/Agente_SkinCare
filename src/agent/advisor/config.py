@@ -27,14 +27,14 @@ def parse_endpointing(raw: str | None) -> str:
     return "MEDIUM"
 
 
-def parse_restart_after(raw: str | None) -> int:
+def parse_restart_after(raw: str | None) -> int | float:
     """Segundos entre 0 y 480 (exclusivos); otro valor usa 420 y se registra."""
     if raw is None:
         return 420
     try:
         value = float(raw)
-        if 0 < value < 480:
-            return int(value)
+        if 0 < value < 480:  # también rechaza NaN e infinito
+            return int(value) if value.is_integer() else value  # 0.5 sigue siendo 0.5: int() lo dejaría en 0
     except ValueError:
         pass
     log.warning("NOVA_RESTART_AFTER_S inválido (%r); usando 420", raw)
@@ -75,7 +75,7 @@ class Config:
     nova_model_id: str
     voice: str
     endpointing: str
-    restart_after_s: int
+    restart_after_s: int | float
     output_sample_rate: int
     routine_model_id: str
     budget_bounds: tuple[Decimal, Decimal]
@@ -83,6 +83,10 @@ class Config:
     catalog_path: Path
     guide_path: Path
     min_exchanges: int
+    guardrail_id: str | None = None  # obligatorias en producción; el prototipo local corre sin Guardrail
+    guardrail_version: str | None = None
+    kb_id: str | None = None
+    pubmed_enabled: bool = False
 
 
 def default_catalog(repo_root: Path) -> Path:
@@ -111,4 +115,19 @@ def load_config(env: dict[str, str] | None = None) -> Config:
         catalog_path=Path(e.get("CATALOG_PATH") or str(default_catalog(repo_root))),
         guide_path=guide_path,
         min_exchanges=parse_min_exchanges(e.get("MIN_EXCHANGES")),
+        guardrail_id=e.get("GUARDRAIL_ID") or None,
+        guardrail_version=e.get("GUARDRAIL_VERSION") or None,
+        kb_id=e.get("KB_ID") or None,
+        pubmed_enabled=parse_bool(e.get("PUBMED_ENABLED")),
     )
+
+
+def parse_bool(raw: str | None) -> bool:
+    """`true` (sin importar mayúsculas) activa; cualquier otra cosa, incluido un valor ausente, es `false`."""
+    return (raw or "").strip().lower() == "true"
+
+
+def missing_production_settings(cfg: Config) -> list[str]:
+    """Variables obligatorias en producción que no están definidas (el Runtime no arranca sin ellas)."""
+    required = {"GUARDRAIL_ID": cfg.guardrail_id, "GUARDRAIL_VERSION": cfg.guardrail_version, "KB_ID": cfg.kb_id}
+    return [name for name, value in required.items() if not value]

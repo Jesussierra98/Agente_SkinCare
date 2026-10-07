@@ -23,15 +23,30 @@ log = logging.getLogger("etl.handler")
 CONFIG_DIR = Path(__file__).resolve().parent / "config"
 
 
+def objects_in(event: dict[str, Any]) -> list[tuple[str, str]]:
+    """`(bucket, clave)` de cada objeto del evento.
+
+    Acepta la notificación clásica de S3 (`Records`, con la clave codificada como URL) y el evento de EventBridge
+    `Object Created` (`detail`, con la clave tal cual). Producción usa EventBridge para no crear una dependencia
+    circular entre los stacks de almacenamiento y de cómputo.
+    """
+    found = [
+        (record["s3"]["bucket"]["name"], unquote_plus(record["s3"]["object"]["key"]))
+        for record in event.get("Records", [])
+    ]
+    detail = event.get("detail")
+    if isinstance(detail, dict) and "bucket" in detail and "object" in detail:
+        found.append((detail["bucket"]["name"], detail["object"]["key"]))
+    return found
+
+
 def handler(event: dict[str, Any], context: Any = None) -> dict[str, Any]:
     import boto3
 
     results = []
     s3 = boto3.client("s3")
     cfg = load_config(CONFIG_DIR)
-    for record in event.get("Records", []):
-        bucket = record["s3"]["bucket"]["name"]
-        key = unquote_plus(record["s3"]["object"]["key"])
+    for bucket, key in objects_in(event):
         if not key.startswith("raw/") or not key.lower().endswith(".csv"):
             log.info("objeto ignorado: s3://%s/%s", bucket, key)
             continue
@@ -51,4 +66,4 @@ def handler(event: dict[str, Any], context: Any = None) -> dict[str, Any]:
     return {"processed": results}
 
 
-__all__ = ["handler", "EtlFailed"]
+__all__ = ["handler", "objects_in", "EtlFailed"]

@@ -12,6 +12,7 @@ import asyncio
 import base64
 import json
 import logging
+import os
 import time
 from typing import Any
 
@@ -35,36 +36,41 @@ from advisor import language as lang
 from advisor import sensitive
 from advisor.config import load_config
 from advisor.guide import Guide
-from advisor.local import InMemoryRecommendations, JsonCatalog, LogNotifier
+from advisor.handoff import wait_for_confirmation
+from advisor.local import JsonCatalog
 from advisor.nudges import TEXT as NUDGE_TEXT, decide_nudge
-from advisor.prompts import GREETING_PROMPT, HANDOFF_INSTRUCTIONS, SYSTEM_PROMPT
+from advisor.prompts import GREETING_PROMPT, HANDOFF_INSTRUCTIONS, HANDOFF_WAIT_INSTRUCTION, NO_AUDIO_INSTRUCTION
 from advisor.routine import RoutineEngine
+from advisor.runtime import build_runtime
 from advisor.session import Session, start_handoff
 from advisor.tools import Deps, build_tools
+from advisor.watchdog import InputAudioWatchdog, ResponseLatencyTracker, emf_metric
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("server")
 
 cfg = load_config()
 catalog = JsonCatalog(cfg.catalog_path)
-store = InMemoryRecommendations()
-notifier = LogNotifier()
 bedrock = boto3.client(
     "bedrock-runtime",
     region_name=cfg.region,
     config=BotoConfig(read_timeout=10, retries={"max_attempts": 1}),
 )
-engine = RoutineEngine(catalog, cfg.routine_model_id, bedrock)
+# Piezas de producción (DynamoDB, SNS, Guardrail, PubMed): cada una se activa solo si su entorno está completo.
+runtime = build_runtime(cfg, os.environ, bedrock=bedrock)
+engine = RoutineEngine(catalog, cfg.routine_model_id, bedrock, guardrail=runtime.routine_guardrail)
 guide = Guide.load(cfg.guide_path)
 deps = Deps(
     catalog=catalog,
-    store=store,
-    notifier=notifier,
+    store=runtime.recommendations,
+    notifier=runtime.notifier,
     engine=engine,
     budget_bounds=cfg.budget_bounds,
     store_domain=cfg.store_domain,
     guide=guide,
+    pubmed=runtime.pubmed,
 )
+log.info("piezas activas: %s", runtime.describe())
 
 app = FastAPI(title="Skincare voice advisor (local prototype)")
 
@@ -75,7 +81,13 @@ class HangUp(Exception):
 
 @app.get("/health")
 async def health() -> dict[str, Any]:
-    return {"ok": True, "model": cfg.nova_model_id, "voice": cfg.voice, "productos": len(catalog._products)}  # noqa: SLF001
+    return {
+        "ok": True,
+        "model": cfg.nova_model_id,
+        "voice": cfg.voice,
+        "productos": len(catalog._products),  # noqa: SLF001
+        "piezas": runtime.describe(),
+    }
 
 
 @app.websocket("/ws")
@@ -109,7 +121,7 @@ async def ws_endpoint(ws: WebSocket) -> None:
         params={"turnDetectionConfiguration": {"endpointingSensitivity": cfg.endpointing}},
         connection={"restart_after_s": cfg.restart_after_s},
     )
-    agent = BidiAgent(model=model, tools=tools, system_prompt=SYSTEM_PROMPT)
+    agent = BidiAgent(model=model, tools=tools, system_prompt=runtime.system_prompt)
 
     # ---- estado del turno -------------------------------------------------
     partial: dict[str, tuple[str, str]] = {}  # content_id -> (rol, texto acumulado)
@@ -123,7 +135,61 @@ async def ws_endpoint(ws: WebSocket) -> None:
         "nudges": 0,
         "last_nudge_at": None,
         "spoke_after_routine": False,
+        "muted": False,  # el cliente silenció el micrófono: no es un fallo de audio
+        "wait_started": False,  # ya se vigila la confirmación del asesor (una sola vez por sesión)
     }
+    watchdog = InputAudioWatchdog()
+    latency = ResponseLatencyTracker()
+
+    def launch(coro: Any) -> None:
+        task = asyncio.create_task(coro)
+        background.add(task)
+        task.add_done_callback(background.discard)
+
+    async def persist() -> None:
+        """Respaldo de la sesión en `ultra-sesiones` (si está configurada). Nunca interrumpe la conversación."""
+        if runtime.session_store is None:
+            return
+        try:
+            await runtime.session_store.save(session)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("no se pudo guardar la sesión (%s)", type(exc).__name__)
+
+    async def wait_for_advisor() -> None:
+        """Sin confirmación del asesor en 30 s, el asesor virtual lo dice una vez y la derivación sigue activa."""
+        if runtime.confirmation_check is None:
+            return
+        outcome = await wait_for_confirmation(runtime.confirmation_check(session.session_id))
+        if outcome == "sin_confirmacion" and not closed:
+            await agent.send(HANDOFF_WAIT_INSTRUCTION[session.language.current])
+
+    async def react_to(motivo: str | None, block: bool, detail: str) -> None:
+        """Deriva al asesor. Con `block`, corta lo que el modelo esté diciendo y descarta el audio de esa respuesta."""
+        if not motivo or (session.handoff and session.handoff.get("motivo") == motivo):
+            return
+        log.warning("derivación: motivo=%s detalle=%r", motivo, detail[:160])
+        if motivo == "condicion_sensible":
+            session.profile.add_sensitive_indicator("condicion_sensible")
+        if block:
+            await send({"type": "interrupt"})
+            if state["in_response"]:
+                state["block_audio"] = True
+        record = await start_handoff(session, runtime.notifier, motivo)
+        await agent.send(HANDOFF_INSTRUCTIONS[motivo][session.language.current])
+        if record.get("notificado") and not state["wait_started"] and runtime.confirmation_check is not None:
+            state["wait_started"] = True
+            launch(wait_for_advisor())
+
+    async def watch_input_audio() -> None:
+        """Más de 3 s sin audio del cliente: corta la salida y el asesor avisa una sola vez que no lo escucha."""
+        while not closed:
+            await asyncio.sleep(0.5)
+            if state["muted"] or not state["greeted"]:
+                continue
+            if watchdog.poll():
+                log.warning("sin audio del cliente por más de 3 s")
+                await send({"type": "interrupt"})
+                await agent.send(NO_AUDIO_INSTRUCTION[session.language.current])
 
     async def handle_user_text(text: str) -> None:
         """Texto final del cliente (voz transcrita o escrito): idioma, intercambios y condiciones sensibles."""
@@ -132,20 +198,19 @@ async def ws_endpoint(ws: WebSocket) -> None:
         current = session.language.update(text)
         if current != previous:
             await send({"type": "language", "language": current})
-        found = sensitive.detect_with_term(text)
-        if found and not (session.handoff and session.handoff.get("motivo") == found[0]):
-            motivo, term = found
-            log.warning("detector local: motivo=%s término=%r frase=%r", motivo, term, text[:160])
-            if motivo == "condicion_sensible":
-                session.profile.add_sensitive_indicator("condicion_sensible")
-            if motivo != "alergia_producto":
-                # Corta lo que el modelo esté diciendo y descarta el audio de esa respuesta.
-                await send({"type": "interrupt"})
-                if state["in_response"]:
-                    state["block_audio"] = True
-            await start_handoff(session, notifier, motivo)
-            instruction = HANDOFF_INSTRUCTIONS[motivo][session.language.current]
-            await agent.send(instruction)
+        latency.user_finished()
+        if runtime.gate is not None:
+            # Con Guardrail: Guardrail y detector en paralelo; si algo no es un "aprobado" limpio, el turno se bloquea.
+            decision = await runtime.gate.evaluate_input(text)
+            motivo, block = decision.handoff_motivo, decision.must_block
+            detail = f"{decision.reason} {decision.details} | {text}"
+        else:
+            found = sensitive.detect_with_term(text)
+            motivo = found[0] if found else None
+            block = found is not None and found[0] != "alergia_producto"
+            detail = f"{found[1] if found else ''} | {text}"
+        await react_to(motivo, block, detail)
+        await persist()
 
 
     async def stall_check(seq: int) -> None:
@@ -188,7 +253,14 @@ async def ws_endpoint(ws: WebSocket) -> None:
                 data = base64.b64decode(msg.get("data", ""))
                 if not data:
                     continue
+                watchdog.on_audio()
                 return {"audio_delta": {"format": "pcm", "source": {"bytes": data}}}
+            if kind == "mute":
+                # Silenciado no es un fallo de audio: el cliente deja de mandar marcos a propósito.
+                state["muted"] = bool(msg.get("muted"))
+                if not state["muted"]:
+                    watchdog.on_audio()
+                continue
             if kind == "text":
                 text = str(msg.get("text", "")).strip()[:500]
                 if not text:
@@ -221,6 +293,9 @@ async def ws_endpoint(ws: WebSocket) -> None:
             watch(state["response_seq"])
         elif isinstance(event, BidiAudioDeltaEvent):
             if not state["block_audio"]:
+                elapsed_ms = latency.first_audio()
+                if elapsed_ms is not None:
+                    print(emf_metric("ResponseLatencyMs", elapsed_ms), flush=True)  # EMF: una línea JSON por stdout
                 await send({"type": "audio", "data": event.audio})
         elif isinstance(event, BidiBargeInEvent):
             await send({"type": "interrupt"})
@@ -245,13 +320,20 @@ async def ws_endpoint(ws: WebSocket) -> None:
                 state["spoke_after_routine"] = True
             if rol == "cliente":
                 await handle_user_text(text)
+            elif runtime.gate is not None:
+                # Salida del asesor: cada oración completa pasa por el Guardrail. Mitiga, no evita del todo, algo ya dicho.
+                verdict = await runtime.gate.evaluate_output(text)
+                if verdict.must_block:
+                    await react_to(verdict.handoff_motivo, True, f"salida {verdict.reason} | {text}")
         elif type(event).__name__ == "ToolResultEvent":
             result = getattr(event, "tool_result", None) or {}
             log.info("resultado herramienta [%s]: %s", result.get("status"), json.dumps(result.get("content"), ensure_ascii=False, default=str)[:600])
+            await persist()
         elif isinstance(event, BidiToolUseBlocksEvent):
             for tool_use in event.tool_uses:
                 log.info("herramienta: %s %s", tool_use.get("name"), json.dumps(tool_use.get("input"), ensure_ascii=False))
 
+    launch(watch_input_audio())
     try:
         await agent.run(inputs=[input_fn], outputs=[output_fn])
     except (WebSocketDisconnect, HangUp):
@@ -263,6 +345,7 @@ async def ws_endpoint(ws: WebSocket) -> None:
         closed = True
         for task in list(background):
             task.cancel()
+        await persist()
         try:
             await ws.close()
         except Exception:  # noqa: BLE001

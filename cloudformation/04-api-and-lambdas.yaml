@@ -1,0 +1,513 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  ultra-skincare-compute: ETL_Lambda (se dispara con CSV en raw/), ultra-caja-lambda, API_Caja (HTTP API con JWT
+  Authorizer de Cognito), repositorio ECR del agente, tópico SNS de derivación, secreto de PubMed y roles IAM con nombre
+  y mínimo privilegio (ETL, Caja y Runtime del agente).
+
+Parameters:
+  CodeBucket:
+    Type: String
+    Description: Bucket con los .zip de las Lambdas (lo sube scripts/deploy.ps1; es el bucket raw, prefijo artifacts/).
+  EtlCodeKey:
+    Type: String
+    Description: Clave del .zip del ETL dentro de CodeBucket.
+  CajaCodeKey:
+    Type: String
+    Description: Clave del .zip de la API de Caja dentro de CodeBucket.
+  FrontendOrigin:
+    Type: String
+    Default: "https://localhost:5173"
+    AllowedPattern: "^https?://[^/\\s*]+$"
+    Description: >-
+      Origen permitido por CORS (sin barra final ni comodín). El dominio de CloudFront solo existe después del stack
+      frontend: despliega una vez con este valor por defecto y vuelve a desplegar con el dominio real.
+  HandoffEmail:
+    Type: String
+    Default: ""
+    Description: Correo del personal de piso que recibe los avisos de derivación. Vacío = sin suscripción (se agrega después).
+  LogRetentionDays:
+    Type: Number
+    Default: 30
+    AllowedValues: [7, 14, 30, 60, 90, 180, 365]
+  RoutineInferenceProfileId:
+    Type: String
+    Default: us.anthropic.claude-haiku-4-5-20251001-v1:0
+    Description: Perfil de inferencia de Claude Haiku 4.5 (verificado en el spike 4.8).
+  RoutineFoundationModelId:
+    Type: String
+    Default: anthropic.claude-haiku-4-5-20251001-v1:0
+  NovaModelId:
+    Type: String
+    Default: amazon.nova-2-sonic-v1:0
+
+Conditions:
+  HasHandoffEmail: !Not [!Equals [!Ref HandoffEmail, ""]]
+
+Resources:
+  # ---------------------------------------------------------------------------------------- repositorio y aviso
+  AgentRepository:
+    Type: AWS::ECR::Repository
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      RepositoryName: ultra-skincare-agent
+      ImageTagMutability: IMMUTABLE # cada despliegue usa una etiqueta nueva (versión o commit)
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      EncryptionConfiguration:
+        EncryptionType: AES256
+      LifecyclePolicy:
+        LifecyclePolicyText: >-
+          {"rules":[{"rulePriority":1,"description":"Conservar las ultimas 20 imagenes","selection":{"tagStatus":"any","countType":"imageCountMoreThan","countNumber":20},"action":{"type":"expire"}}]}
+
+  HandoffTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: ultra-skincare-handoff
+      DisplayName: Derivaciones de Ultra Skincare
+      KmsMasterKeyId: alias/aws/sns
+  HandoffEmailSubscription:
+    Type: AWS::SNS::Subscription
+    Condition: HasHandoffEmail
+    Properties:
+      TopicArn: !Ref HandoffTopic
+      Protocol: email
+      Endpoint: !Ref HandoffEmail
+
+  NcbiApiKeySecret:
+    # Sin valor: el responsable lo guarda después (consola o `aws secretsmanager put-secret-value`).
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: ultra-skincare/ncbi-api-key
+      Description: API key de NCBI E-utilities (solo si PUBMED_ENABLED=true)
+      KmsKeyId: !ImportValue ultra-skincare-storage:DataKeyArn
+
+  # ------------------------------------------------------------------------------------------- bitácoras
+  EtlLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/lambda/ultra-skincare-etl
+      RetentionInDays: !Ref LogRetentionDays
+  CajaLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/lambda/ultra-caja-lambda
+      RetentionInDays: !Ref LogRetentionDays
+  ApiLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/apigateway/ultra-skincare-api
+      RetentionInDays: !Ref LogRetentionDays
+
+  # ----------------------------------------------------------------------------------------------- roles
+  EtlRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: ultra-skincare-etl-role
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: "sts:AssumeRole"
+      Policies:
+        - PolicyName: ultra-skincare-etl-policy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: Bitacora
+                Effect: Allow
+                Action:
+                  - "logs:CreateLogStream"
+                  - "logs:PutLogEvents"
+                Resource: !Sub "${EtlLogGroup.Arn}:*"
+              - Sid: LeerCsv
+                Effect: Allow
+                Action: "s3:GetObject"
+                Resource: !Sub
+                  - "${Bucket}/raw/*"
+                  - Bucket: !ImportValue ultra-skincare-storage:RawBucketArn
+              - Sid: EscribirCsvNormalizado
+                Effect: Allow
+                Action: "s3:PutObject"
+                Resource: !Sub
+                  - "${Bucket}/normalized/*"
+                  - Bucket: !ImportValue ultra-skincare-storage:RawBucketArn
+              - Sid: EscribirDocumentosDeLaKb
+                Effect: Allow
+                Action: "s3:PutObject"
+                Resource: !Sub
+                  - "${Bucket}/productos/*"
+                  - Bucket: !ImportValue ultra-skincare-storage:KbSourceBucketArn
+              - Sid: CargarCatalogo
+                Effect: Allow
+                Action: "dynamodb:PutItem"
+                Resource: !ImportValue ultra-skincare-storage:ProductsTableArn
+              - Sid: IniciarIngesta
+                Effect: Allow
+                Action: "bedrock:StartIngestionJob"
+                Resource: !ImportValue ultra-skincare-bedrock:KnowledgeBaseArn
+              - Sid: Cifrado
+                Effect: Allow
+                Action:
+                  - "kms:Decrypt"
+                  - "kms:GenerateDataKey"
+                  - "kms:DescribeKey"
+                Resource: !ImportValue ultra-skincare-storage:DataKeyArn
+
+  CajaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: ultra-skincare-caja-role
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: "sts:AssumeRole"
+      Policies:
+        - PolicyName: ultra-skincare-caja-policy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: Bitacora
+                Effect: Allow
+                Action:
+                  - "logs:CreateLogStream"
+                  - "logs:PutLogEvents"
+                Resource: !Sub "${CajaLogGroup.Arn}:*"
+              - Sid: RecomendacionesLeerYMarcar
+                Effect: Allow
+                Action:
+                  - "dynamodb:GetItem"
+                  - "dynamodb:UpdateItem"
+                Resource: !ImportValue ultra-skincare-storage:RecommendationsTableArn
+              - Sid: RecomendacionesPorCodigo
+                Effect: Allow
+                Action: "dynamodb:Query"
+                Resource: !Sub
+                  - "${Table}/index/codigo_corto-index"
+                  - Table: !ImportValue ultra-skincare-storage:RecommendationsTableArn
+              - Sid: ConfirmarDerivacion
+                Effect: Allow
+                Action: "dynamodb:UpdateItem"
+                Resource: !ImportValue ultra-skincare-storage:SessionsTableArn
+              - Sid: Cifrado
+                Effect: Allow
+                Action:
+                  - "kms:Decrypt"
+                  - "kms:GenerateDataKey"
+                  - "kms:DescribeKey"
+                Resource: !ImportValue ultra-skincare-storage:DataKeyArn
+
+  AgentRuntimeRole:
+    # Rol de ejecución del Runtime en AgentCore (el contenedor se despliega con `agentcore deploy`, no con CloudFormation).
+    Type: AWS::IAM::Role
+    Metadata:
+      cfn-lint:
+        config:
+          # bedrock:InvokeModelWithBidirectionalStream es la acción real de Nova 2 Sonic, pero la lista de acciones
+          # que conoce cfn-lint todavía no la incluye.
+          ignore_checks:
+            - W3037
+    Properties:
+      RoleName: ultra-skincare-agent-runtime-role
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: bedrock-agentcore.amazonaws.com
+            Action: "sts:AssumeRole"
+            Condition:
+              StringEquals:
+                "aws:SourceAccount": !Ref AWS::AccountId
+              ArnLike:
+                "aws:SourceArn": !Sub "arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:*"
+      Policies:
+        - PolicyName: ultra-skincare-agent-policy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: VozNova
+                Effect: Allow
+                Action: "bedrock:InvokeModelWithBidirectionalStream"
+                Resource: !Sub "arn:${AWS::Partition}:bedrock:${AWS::Region}::foundation-model/${NovaModelId}"
+              - Sid: MotorRutinaPerfilDeInferencia
+                Effect: Allow
+                Action: "bedrock:InvokeModel"
+                Resource: !Sub "arn:${AWS::Partition}:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/${RoutineInferenceProfileId}"
+              - Sid: MotorRutinaModeloBaseEnRegionesDelPerfil
+                # Un perfil entre regiones enruta a modelos base de varias regiones; solo se permite ese modelo y solo a través del perfil.
+                Effect: Allow
+                Action: "bedrock:InvokeModel"
+                Resource: !Sub "arn:${AWS::Partition}:bedrock:*::foundation-model/${RoutineFoundationModelId}"
+                Condition:
+                  StringLike:
+                    "bedrock:InferenceProfileArn": !Sub "arn:${AWS::Partition}:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/${RoutineInferenceProfileId}"
+              - Sid: Guardrail
+                Effect: Allow
+                Action: "bedrock:ApplyGuardrail"
+                Resource: !ImportValue ultra-skincare-bedrock:GuardrailArn
+              - Sid: BaseDeConocimiento
+                Effect: Allow
+                Action: "bedrock:Retrieve"
+                Resource: !ImportValue ultra-skincare-bedrock:KnowledgeBaseArn
+              - Sid: Catalogo
+                Effect: Allow
+                Action:
+                  - "dynamodb:GetItem"
+                  - "dynamodb:BatchGetItem"
+                Resource: !ImportValue ultra-skincare-storage:ProductsTableArn
+              - Sid: Recomendaciones
+                Effect: Allow
+                Action:
+                  - "dynamodb:GetItem"
+                  - "dynamodb:PutItem"
+                  - "dynamodb:UpdateItem"
+                Resource: !ImportValue ultra-skincare-storage:RecommendationsTableArn
+              - Sid: RecomendacionesPorCodigo
+                Effect: Allow
+                Action: "dynamodb:Query"
+                Resource: !Sub
+                  - "${Table}/index/codigo_corto-index"
+                  - Table: !ImportValue ultra-skincare-storage:RecommendationsTableArn
+              - Sid: Sesiones
+                Effect: Allow
+                Action:
+                  - "dynamodb:GetItem"
+                  - "dynamodb:PutItem"
+                  - "dynamodb:UpdateItem"
+                Resource: !ImportValue ultra-skincare-storage:SessionsTableArn
+              - Sid: CacheDeEvidencias
+                Effect: Allow
+                Action:
+                  - "dynamodb:GetItem"
+                  - "dynamodb:PutItem"
+                Resource: !ImportValue ultra-skincare-storage:EvidenceTableArn
+              - Sid: AvisoDeDerivacion
+                Effect: Allow
+                Action: "sns:Publish"
+                Resource: !Ref HandoffTopic
+              - Sid: ApiKeyDePubMed
+                Effect: Allow
+                Action: "secretsmanager:GetSecretValue"
+                Resource: !Ref NcbiApiKeySecret
+              - Sid: Cifrado
+                Effect: Allow
+                Action:
+                  - "kms:Decrypt"
+                  - "kms:GenerateDataKey"
+                  - "kms:DescribeKey"
+                Resource: !ImportValue ultra-skincare-storage:DataKeyArn
+              - Sid: DescargarImagen
+                Effect: Allow
+                Action:
+                  - "ecr:BatchGetImage"
+                  - "ecr:GetDownloadUrlForLayer"
+                Resource: !GetAtt AgentRepository.Arn
+              - Sid: TokenDeEcr
+                # ecr:GetAuthorizationToken no admite permisos por recurso: "*" es lo único posible.
+                Effect: Allow
+                Action: "ecr:GetAuthorizationToken"
+                Resource: "*"
+              - Sid: Bitacora
+                Effect: Allow
+                Action:
+                  - "logs:CreateLogGroup"
+                  - "logs:CreateLogStream"
+                  - "logs:PutLogEvents"
+                  - "logs:DescribeLogStreams"
+                Resource: !Sub "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/bedrock-agentcore/runtimes/*"
+              - Sid: IdentidadDeCargaDeTrabajo
+                # Verificar contra la documentación vigente de AgentCore durante el spike 7.17.
+                Effect: Allow
+                Action:
+                  - "bedrock-agentcore:GetWorkloadAccessToken"
+                  - "bedrock-agentcore:GetWorkloadAccessTokenForJWT"
+                  - "bedrock-agentcore:GetWorkloadAccessTokenForUserId"
+                Resource:
+                  - !Sub "arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:workload-identity-directory/default"
+                  - !Sub "arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:workload-identity-directory/default/workload-identity/*"
+
+  # ---------------------------------------------------------------------------------------------- Lambdas
+  EtlFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: ultra-skincare-etl
+      Description: Procesa el CSV del catálogo (raw/*.csv) y carga DynamoDB y la Knowledge Base
+      Runtime: python3.12
+      Handler: handler.handler
+      Architectures: [x86_64]
+      Role: !GetAtt EtlRole.Arn
+      Timeout: 300
+      MemorySize: 1024
+      Code:
+        S3Bucket: !Ref CodeBucket
+        S3Key: !Ref EtlCodeKey
+      LoggingConfig:
+        LogGroup: !Ref EtlLogGroup
+      Environment:
+        Variables:
+          PRODUCTS_TABLE: ultra-productos
+          KB_BUCKET: !ImportValue ultra-skincare-storage:KbSourceBucketName
+          KB_ID: !ImportValue ultra-skincare-bedrock:KnowledgeBaseId
+          KB_DATA_SOURCE_ID: !ImportValue ultra-skincare-bedrock:DataSourceId
+  EtlInvokeConfig:
+    # Un reintento automático reprocesaría el CSV y lanzaría otra ingesta de la Knowledge Base.
+    Type: AWS::Lambda::EventInvokeConfig
+    Properties:
+      FunctionName: !Ref EtlFunction
+      Qualifier: $LATEST
+      MaximumRetryAttempts: 0
+  EtlRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: ultra-skincare-etl-csv
+      Description: Un CSV nuevo en raw/ dispara el ETL
+      State: ENABLED
+      EventPattern:
+        source: [aws.s3]
+        detail-type: [Object Created]
+        detail:
+          bucket:
+            name:
+              - !ImportValue ultra-skincare-storage:RawBucketName
+          object:
+            key:
+              - wildcard: "raw/*.csv"
+      Targets:
+        - Id: etl
+          Arn: !GetAtt EtlFunction.Arn
+  EtlRulePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref EtlFunction
+      Action: "lambda:InvokeFunction"
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt EtlRule.Arn
+
+  CajaFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: ultra-caja-lambda
+      Description: API de la Vista_Caja (consultar, marcar como atendida y confirmar derivaciones)
+      Runtime: python3.12
+      Handler: caja_handler.lambda_handler
+      Architectures: [x86_64]
+      Role: !GetAtt CajaRole.Arn
+      Timeout: 10
+      MemorySize: 256
+      Code:
+        S3Bucket: !Ref CodeBucket
+        S3Key: !Ref CajaCodeKey
+      LoggingConfig:
+        LogGroup: !Ref CajaLogGroup
+      Environment:
+        Variables:
+          RECOMMENDATIONS_TABLE: ultra-recomendaciones
+          SESSIONS_TABLE: ultra-sesiones
+
+  # -------------------------------------------------------------------------------------------- API HTTP
+  Api:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: ultra-skincare-api
+      ProtocolType: HTTP
+      CorsConfiguration:
+        AllowOrigins:
+          - !Ref FrontendOrigin
+        AllowMethods: [GET, POST, OPTIONS]
+        AllowHeaders: [authorization, content-type]
+        MaxAge: 600
+  JwtAuthorizer:
+    Type: AWS::ApiGatewayV2::Authorizer
+    Properties:
+      ApiId: !Ref Api
+      Name: cognito-jwt
+      AuthorizerType: JWT
+      IdentitySource:
+        - $request.header.Authorization
+      JwtConfiguration:
+        Issuer: !ImportValue ultra-skincare-auth:Issuer
+        # Los access tokens llevan `client_id` y el Authorizer lo compara con esta lista. KioscoClient entra, pero la
+        # Lambda lo rechaza con 403 porque exige el grupo `caja`.
+        Audience:
+          - !ImportValue ultra-skincare-auth:KioscoClientId
+          - !ImportValue ultra-skincare-auth:CajaClientId
+  CajaIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref Api
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !GetAtt CajaFunction.Arn
+      PayloadFormatVersion: "2.0"
+  GetRecommendationRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref Api
+      RouteKey: "GET /recomendacion/{id}"
+      AuthorizationType: JWT
+      AuthorizerId: !Ref JwtAuthorizer
+      Target: !Sub "integrations/${CajaIntegration}"
+  MarkAttendedRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref Api
+      RouteKey: "POST /recomendacion/{id}/atendida"
+      AuthorizationType: JWT
+      AuthorizerId: !Ref JwtAuthorizer
+      Target: !Sub "integrations/${CajaIntegration}"
+  ConfirmHandoffRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref Api
+      RouteKey: "POST /derivaciones/{session_id}/confirmar"
+      AuthorizationType: JWT
+      AuthorizerId: !Ref JwtAuthorizer
+      Target: !Sub "integrations/${CajaIntegration}"
+  ApiStage:
+    Type: AWS::ApiGatewayV2::Stage
+    Properties:
+      ApiId: !Ref Api
+      StageName: $default
+      AutoDeploy: true
+      DefaultRouteSettings:
+        ThrottlingBurstLimit: 20
+        ThrottlingRateLimit: 10
+      AccessLogSettings:
+        DestinationArn: !GetAtt ApiLogGroup.Arn
+        Format: >-
+          {"requestId":"$context.requestId","ip":"$context.identity.sourceIp","requestTime":"$context.requestTime","routeKey":"$context.routeKey","status":"$context.status","responseLatency":"$context.responseLatency","error":"$context.error.message"}
+  ApiInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref CajaFunction
+      Action: "lambda:InvokeFunction"
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub "arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${Api}/*"
+
+Outputs:
+  ApiUrl:
+    Value: !Sub "https://${Api}.execute-api.${AWS::Region}.amazonaws.com"
+    Export:
+      Name: !Sub "${AWS::StackName}:ApiUrl"
+  AgentRuntimeRoleArn:
+    Description: Rol que se pasa a `agentcore deploy`.
+    Value: !GetAtt AgentRuntimeRole.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}:AgentRuntimeRoleArn"
+  AgentRepositoryUri:
+    Value: !GetAtt AgentRepository.RepositoryUri
+    Export:
+      Name: !Sub "${AWS::StackName}:AgentRepositoryUri"
+  HandoffTopicArn:
+    Value: !Ref HandoffTopic
+    Export:
+      Name: !Sub "${AWS::StackName}:HandoffTopicArn"
+  NcbiApiKeySecretArn:
+    Value: !Ref NcbiApiKeySecret
+    Export:
+      Name: !Sub "${AWS::StackName}:NcbiApiKeySecretArn"

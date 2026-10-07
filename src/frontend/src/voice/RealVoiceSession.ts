@@ -238,6 +238,10 @@ export class RealVoiceSession implements VoiceSession {
 
   setMuted(muted: boolean): void {
     this.muted = muted;
+    // El servidor vigila que llegue audio: silenciar a propósito no debe parecer un micrófono caído.
+    if (this.ws?.readyState === WebSocket.OPEN) {
+      this.ws.send(JSON.stringify({ type: 'mute', muted }));
+    }
     this.stream?.getAudioTracks().forEach((track) => (track.enabled = !muted));
   }
 

@@ -5,3 +5,4 @@ hypothesis==6.168.5
 moto[s3,dynamodb]==5.2.3
 freezegun==1.5.5
 jsonschema==4.26.0
+cfn-lint==1.57.2
