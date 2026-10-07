@@ -44,6 +44,7 @@ export interface KioskStrings {
   routineNote: string;
   imagePlaceholder: string;
   imageAlt: (name: string) => string;
+  noProductForStep: string;
 }
 
 const es: KioskStrings = {
@@ -107,6 +108,7 @@ const es: KioskStrings = {
     'Si quieres saber cómo combinar los productos, consulta a un asesor de la tienda. Puedes seguir preguntando por voz antes de colgar.',
   imagePlaceholder: 'Imagen del producto (columna «Imagen» del CSV)',
   imageAlt: (name) => `Imagen de ${name}`,
+  noProductForStep: 'No hay producto disponible para este paso.',
 };
 
 const en: KioskStrings = {
@@ -170,6 +172,7 @@ const en: KioskStrings = {
     'If you want to know how to combine the products, ask a store advisor. You can keep asking by voice before hanging up.',
   imagePlaceholder: 'Product image (CSV «Image» column)',
   imageAlt: (name) => `Image of ${name}`,
+  noProductForStep: 'No product available for this step.',
 };
 
 export const STRINGS: Record<Language, KioskStrings> = { es, en };

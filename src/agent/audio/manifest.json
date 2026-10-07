@@ -1,0 +1,5 @@
+{
+  "sample_rate": 24000,
+  "voice": "tiffany",
+  "format": "pcm_s16le_mono"
+}

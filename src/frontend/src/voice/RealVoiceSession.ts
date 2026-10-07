@@ -1,33 +1,11 @@
 import type { RoutineItem } from '../data/sampleRoutine';
-import type { Language } from '../kiosk/i18n';
+import { KioskAuthError } from '../auth/kioskAuth';
 import { base64ToBytes, bytesToBase64, decimalStringToCents, pcm16ToFloat, rmsPcm16 } from './pcm';
+import type { ClientMessage, ServerMessage, ServerRoutineStep } from './protocol';
 import type { VoiceEvent, VoiceListener, VoiceSession } from './VoiceSession';
+import { ConnectError, connectVoiceSocket } from './wsClient';
 
-const CONNECT_TIMEOUT_MS = 5000;
 const SPEECH_RMS_THRESHOLD = 0.015;
-
-interface ServerRoutineStep {
-  paso: 1 | 2 | 3 | 4;
-  sku: string;
-  nombre: string;
-  marca: string;
-  precio: string;
-  imagen_url: string;
-  razon_catalogo: string;
-  modo_uso: string;
-}
-
-type ServerMessage =
-  | { type: 'session_ready'; output_sample_rate: number; language?: Language }
-  | { type: 'audio'; data: string }
-  | { type: 'interrupt' }
-  | { type: 'transcript'; role: 'cliente' | 'asesor'; text: string; final: boolean }
-  | { type: 'routine'; pasos: ServerRoutineStep[] }
-  | { type: 'saved'; rec_id: string; codigo_corto: string; qr_url: string }
-  | { type: 'readings'; ingrediente: string; articulos: { titulo: string }[] }
-  | { type: 'handoff'; motivo: string; estado: 'pendiente' | 'confirmada' | 'sin_notificar' }
-  | { type: 'language'; language: Language }
-  | { type: 'connection_error'; reason: string };
 
 export function defaultWsUrl(): string {
   const fromEnv = import.meta.env.VITE_WS_URL as string | undefined;
@@ -63,7 +41,16 @@ export class RealVoiceSession implements VoiceSession {
   private muted = false;
   private closed = false;
 
-  constructor(private readonly wsUrl: string = defaultWsUrl()) {}
+  /**
+   * @param wsUrl dirección del WebSocket (local o `wss://` de AgentCore).
+   * @param getToken access token de Cognito del dispositivo; sin él la conexión es anónima (solo desarrollo local).
+   * @param sessionId identificador de sesión (UUID) que se envía como parámetro de consulta.
+   */
+  constructor(
+    private readonly wsUrl: string = defaultWsUrl(),
+    private readonly getToken?: () => Promise<string>,
+    private readonly sessionId: string = crypto.randomUUID(),
+  ) {}
 
   subscribe(listener: VoiceListener): () => void {
     this.listeners.add(listener);
@@ -83,6 +70,7 @@ export class RealVoiceSession implements VoiceSession {
     void this.playbackCtx.resume();
     void this.captureCtx.resume();
 
+    this.emit({ type: 'phase', phase: 'requesting_mic' });
     try {
       this.stream = await navigator.mediaDevices.getUserMedia({
         audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 },
@@ -102,60 +90,42 @@ export class RealVoiceSession implements VoiceSession {
         outputChannelCount: [1],
       });
       this.playbackNode.connect(this.playbackCtx.destination);
+      this.emit({ type: 'phase', phase: 'connecting' });
       await this.openSocket();
     } catch (err) {
       this.teardown();
-      this.emit({ type: 'error', code: err instanceof Error && err.message === 'timeout' ? 'timeout' : 'connect_failed' });
+      this.emit({ type: 'error', code: this.errorCode(err) });
       return;
     }
     this.startCapture();
   }
 
-  /** Abre el WebSocket y espera `session_ready` (máximo 5 s). */
-  private openSocket(): Promise<void> {
-    return new Promise((resolve, reject) => {
-      const ws = new WebSocket(this.wsUrl);
-      this.ws = ws;
-      let ready = false;
-      const timer = setTimeout(() => {
-        if (!ready) {
-          ws.close();
-          reject(new Error('timeout'));
-        }
-      }, CONNECT_TIMEOUT_MS);
+  /** Traduce un fallo de conexión o de autenticación al código que entiende la pantalla de inicio. */
+  private errorCode(err: unknown): 'timeout' | 'connect_failed' | 'not_provisioned' | 'auth_failed' {
+    if (err instanceof ConnectError) return err.code;
+    if (err instanceof KioskAuthError) return err.code === 'not_provisioned' ? 'not_provisioned' : 'auth_failed';
+    return 'connect_failed';
+  }
 
-      ws.onmessage = (e) => {
-        let msg: ServerMessage;
-        try {
-          msg = JSON.parse(e.data as string) as ServerMessage;
-        } catch {
-          return;
-        }
-        if (msg.type === 'session_ready' && !ready) {
-          ready = true;
-          clearTimeout(timer);
-          this.emit({ type: 'ready', language: msg.language ?? 'es' });
-          resolve();
-          return;
-        }
-        this.handle(msg);
-      };
-      ws.onerror = () => {
-        if (!ready) {
-          clearTimeout(timer);
-          reject(new Error('connect_failed'));
-        }
-      };
-      ws.onclose = () => {
-        clearTimeout(timer);
-        if (!ready) {
-          reject(new Error('connect_failed'));
-        } else if (!this.closed) {
-          this.emit({ type: 'connection_lost', reason: 'closed' });
-          this.releaseAudio();
-        }
-      };
+  /** Abre el WebSocket (con el JWT si hay autenticación) y espera `session_ready` (máximo 5 s). */
+  private async openSocket(): Promise<void> {
+    const token = this.getToken ? await this.getToken() : undefined;
+    const { ws, ready } = await connectVoiceSocket({
+      url: this.wsUrl,
+      token,
+      sessionId: this.sessionId,
+      handlers: {
+        onMessage: (msg) => this.handle(msg),
+        onClose: () => {
+          if (!this.closed) {
+            this.emit({ type: 'connection_lost', reason: 'closed' });
+            this.releaseAudio();
+          }
+        },
+      },
     });
+    this.ws = ws;
+    this.emit({ type: 'ready', language: ready.language ?? 'es' });
   }
 
   private startCapture() {
@@ -230,10 +200,14 @@ export class RealVoiceSession implements VoiceSession {
     }
   }
 
+  private send(message: ClientMessage): void {
+    this.ws?.send(JSON.stringify(message));
+  }
+
   sendText(text: string): void {
     const t = text.trim();
     if (!t || this.ws?.readyState !== WebSocket.OPEN) return;
-    this.ws.send(JSON.stringify({ type: 'text', text: t }));
+    this.send({ type: 'text', text: t });
   }
 
   setMuted(muted: boolean): void {
@@ -244,7 +218,7 @@ export class RealVoiceSession implements VoiceSession {
   hangup(): void {
     if (this.ws?.readyState === WebSocket.OPEN) {
       try {
-        this.ws.send(JSON.stringify({ type: 'hangup' }));
+        this.send({ type: 'hangup' });
       } catch {
         /* el socket ya se cerró */
       }

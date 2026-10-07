@@ -6,6 +6,7 @@ import {
   StepRoutineIcon,
   StepWaveIcon,
 } from '../components/Icons';
+import type { VoiceErrorCode } from '../voice/VoiceSession';
 import type { KioskStrings } from './i18n';
 
 const STEP_ICONS = [StepMicIcon, StepWaveIcon, StepRoutineIcon, StepPhoneIcon];
@@ -14,13 +15,15 @@ interface Props {
   t: KioskStrings;
   onStart: () => void;
   starting: boolean;
-  error: 'mic_denied' | 'connect_failed' | 'timeout' | null;
+  error: VoiceErrorCode | null;
 }
 
 const ERROR_TEXT: Record<NonNullable<Props['error']>, string> = {
   mic_denied: 'Se requiere acceso al micrófono para conversar. Permítelo e inténtalo de nuevo.',
   connect_failed: 'No se pudo iniciar la conversación. Inténtalo de nuevo.',
   timeout: 'La conversación tardó demasiado en iniciar. Inténtalo de nuevo.',
+  not_provisioned: 'Este dispositivo todavía no está configurado. Pide apoyo al responsable de la tienda.',
+  auth_failed: 'No se pudo validar este dispositivo. Pide apoyo al responsable de la tienda.',
 };
 
 export function IdleScreen({ t, onStart, starting, error }: Props) {

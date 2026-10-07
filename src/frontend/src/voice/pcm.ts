@@ -55,3 +55,21 @@ export function decimalStringToCents(value: string): number {
   const cents = Number(m[2]) * 100 + Number((m[3] ?? '').padEnd(2, '0') || 0);
   return m[1] === '-' ? -cents : cents;
 }
+
+/**
+ * Remuestrea audio Float32 de `fromRate` a `toRate` por interpolación lineal (misma lógica que el worklet de captura).
+ * Si `toRate` >= `fromRate` devuelve una copia sin cambios de frecuencia.
+ */
+export function downsample(samples: Float32Array, fromRate: number, toRate: number): Float32Array {
+  if (toRate >= fromRate || samples.length === 0) return samples.slice();
+  const ratio = fromRate / toRate;
+  const length = Math.floor((samples.length - 1) / ratio) + 1;
+  const out = new Float32Array(length);
+  for (let i = 0; i < length; i++) {
+    const pos = i * ratio;
+    const index = Math.floor(pos);
+    const next = Math.min(index + 1, samples.length - 1);
+    out[i] = samples[index]! + (samples[next]! - samples[index]!) * (pos - index);
+  }
+  return out;
+}

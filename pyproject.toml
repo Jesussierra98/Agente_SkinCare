@@ -3,3 +3,6 @@
 pythonpath = ["src/agent", "src/etl", "src/caja_api"]
 testpaths = ["tests"]
 addopts = "-q"
+markers = [
+    "integration: pruebas contra la infraestructura desplegada (SKINCARE_INTEGRATION=1)",
+]

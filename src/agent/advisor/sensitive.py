@@ -46,6 +46,29 @@ COMPATIBILITY_TERMS: tuple[str, ...] = (
     "interactu", "interact with",
 )
 
+# Preguntas de mezcla sin frase fija ("¿Puedo ponerme retinol y ácido glicólico juntos?"): palabras de simultaneidad
+# o de mezcla junto con al menos dos activos distintos.
+MIXING_HINTS: tuple[str, ...] = (
+    "juntos", "juntas", "al mismo tiempo", "a la vez", "en la misma rutina", "mezcl", "combin", "revolver",
+    "together", "same time", "at once", "mix", "combin", "layer",
+)
+ACTIVE_TERMS: tuple[str, ...] = (
+    "retinol", "retinoide", "retinoid", "tretinoina", "glicolic", "glycolic", "salicilic", "salicylic", "lactic",
+    "mandelic", "vitamina c", "vitamin c", "acido ascorbico", "ascorbic", "niacinamida", "niacinamide",
+    "peroxido de benzoilo", "benzoyl peroxide", "aha", "bha", "acido hialuronico", "hyaluronic", "azelaic", "azelaico",
+)
+
+
+def _asks_about_mixing(t: str) -> str | None:
+    """Término que delata una pregunta de mezcla de activos, o `None`."""
+    hint = next((h for h in MIXING_HINTS if h in t), None)
+    if hint is None:
+        return None
+    actives = {a for a in ACTIVE_TERMS if a in t}
+    # "aha"/"bha" dentro de otras palabras no cuentan como activo (p. ej. "ahora").
+    actives = {a for a in actives if a not in {"aha", "bha"} or f" {a} " in t}
+    return hint if len(actives) >= 2 else None
+
 
 def detect_with_term(text: str) -> tuple[str, str] | None:
     """`(motivo, término)` si el texto requiere derivación, o `None`.
@@ -67,6 +90,9 @@ def detect_with_term(text: str) -> tuple[str, str] | None:
     for term in COMPATIBILITY_TERMS:
         if term in t:
             return "compatibilidad", term
+    mixing = _asks_about_mixing(t)
+    if mixing:
+        return "compatibilidad", mixing
     return None
 
 

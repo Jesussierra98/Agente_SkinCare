@@ -152,3 +152,32 @@ def test_el_idioma_vigente_siempre_es_es_o_en(turns: list[str]) -> None:
             assert current == previous
         else:
             assert current == detect_language(turn)
+
+
+# ---- preguntas de mezcla de activos sin frase fija (TC-04) -----------------------------------------------------------
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "¿Puedo ponerme retinol puro y ácido glicólico juntos?",
+        "Can I use retinol and glycolic acid together?",
+        "quiero usar vitamina C y niacinamida al mismo tiempo",
+        "¿se puede combinar el ácido salicílico con el retinol?",
+    ],
+)
+def test_una_pregunta_de_mezcla_de_dos_activos_se_remite_al_asesor(text: str) -> None:
+    assert detect(text) == "compatibilidad"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "quiero algo con retinol",            # un solo activo y sin mezcla
+        "busco una crema con vitamina C",
+        "ahora quiero una crema para la noche",  # "aha" dentro de "ahora" no es un activo
+        "I need a cleanser and a moisturizer together in one set",  # sin activos
+        "hola, tengo la piel seca",
+    ],
+)
+def test_lo_que_no_es_una_pregunta_de_mezcla_no_se_deriva(text: str) -> None:
+    assert detect(text) is None

@@ -1,0 +1,130 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  ultra-skincare-auth: User Pool ultra-skincare-userpool sin autorregistro, grupos kiosco y caja, y los dos app
+  clients públicos KioscoClient y CajaClient (Req. 21.1, 21.3, 22.3).
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: ultra-skincare
+    AllowedPattern: '^[a-z][a-z0-9-]{2,30}$'
+  KioscoRefreshTokenDays:
+    Type: Number
+    Default: 365
+    MinValue: 1
+    MaxValue: 3650
+    Description: Vida del refresh token del iPad (a calibrar; ver el compromiso de seguridad del diseño, sección 7).
+  CajaRefreshTokenDays:
+    Type: Number
+    Default: 1
+    MinValue: 1
+    MaxValue: 30
+    Description: Vida del refresh token de la Caja.
+
+Resources:
+  UserPool:
+    Type: AWS::Cognito::UserPool
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      UserPoolName: ultra-skincare-userpool
+      # Solo un administrador crea usuarios: no hay autorregistro.
+      AdminCreateUserConfig:
+        AllowAdminCreateUserOnly: true
+      UsernameConfiguration:
+        CaseSensitive: false
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 12
+          RequireLowercase: true
+          RequireUppercase: true
+          RequireNumbers: true
+          RequireSymbols: true
+          TemporaryPasswordValidityDays: 3
+      AccountRecoverySetting:
+        RecoveryMechanisms:
+          - Name: admin_only
+            Priority: 1
+      UserPoolTags:
+        project: !Ref ProjectName
+
+  KioscoGroup:
+    Type: AWS::Cognito::UserPoolGroup
+    Properties:
+      GroupName: kiosco
+      Description: Dispositivos del Kiosco (una cuenta de servicio por iPad).
+      UserPoolId: !Ref UserPool
+
+  CajaGroup:
+    Type: AWS::Cognito::UserPoolGroup
+    Properties:
+      GroupName: caja
+      Description: Cajeros y asesores en piso.
+      UserPoolId: !Ref UserPool
+
+  # El refresh token del Kiosco vive mucho tiempo porque el iPad se aprovisiona una sola vez (DD-03).
+  KioscoClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      ClientName: KioscoClient
+      UserPoolId: !Ref UserPool
+      GenerateSecret: false
+      ExplicitAuthFlows:
+        - ALLOW_USER_PASSWORD_AUTH # solo para el aprovisionamiento en /kiosk/setup
+        - ALLOW_REFRESH_TOKEN_AUTH
+      PreventUserExistenceErrors: ENABLED
+      EnableTokenRevocation: true
+      AccessTokenValidity: 60
+      IdTokenValidity: 60
+      RefreshTokenValidity: !Ref KioscoRefreshTokenDays
+      TokenValidityUnits:
+        AccessToken: minutes
+        IdToken: minutes
+        RefreshToken: days
+
+  CajaClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      ClientName: CajaClient
+      UserPoolId: !Ref UserPool
+      GenerateSecret: false
+      ExplicitAuthFlows:
+        - ALLOW_USER_SRP_AUTH
+        - ALLOW_REFRESH_TOKEN_AUTH
+      PreventUserExistenceErrors: ENABLED
+      EnableTokenRevocation: true
+      AccessTokenValidity: 60
+      IdTokenValidity: 60
+      RefreshTokenValidity: !Ref CajaRefreshTokenDays
+      TokenValidityUnits:
+        AccessToken: minutes
+        IdToken: minutes
+        RefreshToken: days
+
+Outputs:
+  UserPoolId:
+    Value: !Ref UserPool
+    Export:
+      Name: !Sub '${AWS::StackName}-UserPoolId'
+  UserPoolArn:
+    Value: !GetAtt UserPool.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-UserPoolArn'
+  IssuerUrl:
+    Description: Emisor de los JWT (JWT Authorizer de la API).
+    Value: !Sub 'https://cognito-idp.${AWS::Region}.amazonaws.com/${UserPool}'
+    Export:
+      Name: !Sub '${AWS::StackName}-IssuerUrl'
+  DiscoveryUrl:
+    Description: Discovery URL para el Inbound Auth de AgentCore Runtime.
+    Value: !Sub 'https://cognito-idp.${AWS::Region}.amazonaws.com/${UserPool}/.well-known/openid-configuration'
+    Export:
+      Name: !Sub '${AWS::StackName}-DiscoveryUrl'
+  KioscoClientId:
+    Value: !Ref KioscoClient
+    Export:
+      Name: !Sub '${AWS::StackName}-KioscoClientId'
+  CajaClientId:
+    Value: !Ref CajaClient
+    Export:
+      Name: !Sub '${AWS::StackName}-CajaClientId'

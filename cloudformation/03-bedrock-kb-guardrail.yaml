@@ -1,0 +1,215 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  ultra-skincare-bedrock: Guardrail ultra-skincare-guardrail, bucket e índice de S3 Vectors, Knowledge Base con
+  Titan Text Embeddings V2 y data source sobre el bucket KB source, prefijo productos/ (Req. 12.1, 12.2, 22.3).
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: ultra-skincare
+    AllowedPattern: '^[a-z][a-z0-9-]{2,30}$'
+  StorageStackName:
+    Type: String
+    Default: ultra-skincare-storage
+    Description: Stack del que se importan el bucket KB source y la llave KMS.
+  EmbeddingDimensions:
+    Type: Number
+    Default: 1024
+    AllowedValues: [256, 512, 1024]
+    Description: Dimensiones de Titan Text Embeddings V2; debe coincidir con el índice de vectores.
+
+Resources:
+  # ---- Guardrail --------------------------------------------------------------------------------------
+  # Los temas espejo de src/agent/guardrail_topics.json (una prueba comprueba que coinciden).
+  Guardrail:
+    Type: AWS::Bedrock::Guardrail
+    Properties:
+      Name: ultra-skincare-guardrail
+      Description: Bloquea consejo médico, diagnóstico y dictamen de compatibilidad química.
+      BlockedInputMessaging: Esa consulta la atiende un asesor de la tienda.
+      BlockedOutputsMessaging: Esa consulta la atiende un asesor de la tienda.
+      TopicPolicyConfig:
+        TopicsConfig:
+          - Name: consejo_medico
+            Type: DENY
+            Definition: Consejos o recomendaciones médicas sobre condiciones, enfermedades, medicamentos o tratamientos de la piel o del cuerpo.
+            Examples:
+              - ¿Qué medicamento me recomiendas para mi infección en la piel?
+              - ¿Puedo usar esto si estoy embarazada?
+              - What medication should I take for my skin condition?
+              - Is this safe to use while breastfeeding?
+              - ¿Cómo curo mi dermatitis?
+          - Name: diagnostico
+            Type: DENY
+            Definition: Diagnosticar o identificar enfermedades o afecciones de la piel a partir de síntomas o descripciones del cliente.
+            Examples:
+              - ¿Tengo rosácea o dermatitis?
+              - What skin disease do I have?
+              - ¿Esta mancha es cáncer de piel?
+              - ¿Qué enfermedad tengo en la cara?
+              - Can you diagnose my rash?
+          - Name: compatibilidad_quimica
+            Type: DENY
+            Definition: Opiniones sobre si se pueden mezclar o usar juntos ingredientes activos o productos, o sobre riesgos e interacciones químicas entre ellos.
+            Examples:
+              - ¿Puedo mezclar retinol con vitamina C?
+              - Is it safe to combine acids with niacinamide?
+              - ¿Se pueden usar estos dos productos juntos sin riesgo?
+              - Will these two serums react badly together?
+              - ¿Qué pasa si mezclo ácido salicílico con retinol?
+
+  # Una versión numerada: el agente usa GUARDRAIL_ID + GUARDRAIL_VERSION y no DRAFT.
+  GuardrailVersion:
+    Type: AWS::Bedrock::GuardrailVersion
+    Properties:
+      GuardrailIdentifier: !GetAtt Guardrail.GuardrailId
+      Description: Temas denegados iniciales (consejo médico, diagnóstico, compatibilidad química).
+
+  # ---- S3 Vectors ---------------------------------------------------------------------------------------
+  VectorBucket:
+    Type: AWS::S3Vectors::VectorBucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      VectorBucketName: !Sub '${ProjectName}-vectors-${AWS::AccountId}'
+
+  VectorIndex:
+    Type: AWS::S3Vectors::Index
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      VectorBucketName: !Ref VectorBucket
+      IndexName: productos
+      DataType: float32
+      Dimension: !Ref EmbeddingDimensions
+      DistanceMetric: cosine
+      # El texto del fragmento no se filtra: así no cuenta contra el límite de metadata filtrable.
+      MetadataConfiguration:
+        NonFilterableMetadataKeys:
+          - AMAZON_BEDROCK_TEXT
+          - AMAZON_BEDROCK_METADATA
+
+  # ---- Knowledge Base ---------------------------------------------------------------------------------------
+  KnowledgeBaseRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${ProjectName}-kb-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: bedrock.amazonaws.com
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                'aws:SourceAccount': !Ref AWS::AccountId
+              ArnLike:
+                'aws:SourceArn': !Sub 'arn:${AWS::Partition}:bedrock:${AWS::Region}:${AWS::AccountId}:knowledge-base/*'
+      Policies:
+        - PolicyName: kb-access
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: Embeddings
+                Effect: Allow
+                Action: bedrock:InvokeModel
+                Resource: !Sub 'arn:${AWS::Partition}:bedrock:${AWS::Region}::foundation-model/amazon.titan-embed-text-v2:0'
+              - Sid: LeerDocumentos
+                Effect: Allow
+                Action: s3:ListBucket
+                Resource: 
+                  Fn::ImportValue: !Sub '${StorageStackName}-KbSourceBucketArn'
+                Condition:
+                  StringEquals:
+                    'aws:ResourceAccount': !Ref AWS::AccountId
+              - Sid: LeerObjetos
+                Effect: Allow
+                Action: s3:GetObject
+                Resource: !Sub
+                  - '${Bucket}/productos/*'
+                  - Bucket:
+                      Fn::ImportValue: !Sub '${StorageStackName}-KbSourceBucketArn'
+                Condition:
+                  StringEquals:
+                    'aws:ResourceAccount': !Ref AWS::AccountId
+              - Sid: Indice
+                Effect: Allow
+                Action:
+                  - s3vectors:GetIndex
+                  - s3vectors:QueryVectors
+                  - s3vectors:PutVectors
+                  - s3vectors:GetVectors
+                  - s3vectors:DeleteVectors
+                  - s3vectors:ListVectors
+                Resource: !GetAtt VectorIndex.IndexArn
+              - Sid: Llave
+                Effect: Allow
+                Action:
+                  - kms:Decrypt
+                  - kms:GenerateDataKey
+                Resource:
+                  Fn::ImportValue: !Sub '${StorageStackName}-DataKeyArn'
+
+  KnowledgeBase:
+    Type: AWS::Bedrock::KnowledgeBase
+    Properties:
+      Name: !Sub '${ProjectName}-productos'
+      Description: Catálogo de productos de skincare (un documento por SKU).
+      RoleArn: !GetAtt KnowledgeBaseRole.Arn
+      KnowledgeBaseConfiguration:
+        Type: VECTOR
+        VectorKnowledgeBaseConfiguration:
+          EmbeddingModelArn: !Sub 'arn:${AWS::Partition}:bedrock:${AWS::Region}::foundation-model/amazon.titan-embed-text-v2:0'
+          EmbeddingModelConfiguration:
+            BedrockEmbeddingModelConfiguration:
+              Dimensions: !Ref EmbeddingDimensions
+              EmbeddingDataType: FLOAT32
+      StorageConfiguration:
+        Type: S3_VECTORS
+        S3VectorsConfiguration:
+          IndexArn: !GetAtt VectorIndex.IndexArn
+
+  DataSource:
+    Type: AWS::Bedrock::DataSource
+    Properties:
+      KnowledgeBaseId: !Ref KnowledgeBase
+      Name: ultra-skincare-kb-source
+      DataDeletionPolicy: RETAIN
+      DataSourceConfiguration:
+        Type: S3
+        S3Configuration:
+          BucketArn:
+            Fn::ImportValue: !Sub '${StorageStackName}-KbSourceBucketArn'
+          InclusionPrefixes:
+            - productos/
+      # Un documento por SKU: sin partir los documentos en fragmentos.
+      VectorIngestionConfiguration:
+        ChunkingConfiguration:
+          ChunkingStrategy: NONE
+
+Outputs:
+  GuardrailId:
+    Value: !GetAtt Guardrail.GuardrailId
+    Export:
+      Name: !Sub '${AWS::StackName}-GuardrailId'
+  GuardrailArn:
+    Value: !GetAtt Guardrail.GuardrailArn
+    Export:
+      Name: !Sub '${AWS::StackName}-GuardrailArn'
+  GuardrailVersion:
+    Value: !GetAtt GuardrailVersion.Version
+    Export:
+      Name: !Sub '${AWS::StackName}-GuardrailVersion'
+  KnowledgeBaseId:
+    Value: !Ref KnowledgeBase
+    Export:
+      Name: !Sub '${AWS::StackName}-KnowledgeBaseId'
+  KnowledgeBaseArn:
+    Value: !GetAtt KnowledgeBase.KnowledgeBaseArn
+    Export:
+      Name: !Sub '${AWS::StackName}-KnowledgeBaseArn'
+  DataSourceId:
+    Value: !GetAtt DataSource.DataSourceId
+    Export:
+      Name: !Sub '${AWS::StackName}-DataSourceId'

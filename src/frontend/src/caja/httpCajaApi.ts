@@ -142,7 +142,23 @@ export class HttpCajaApi implements CajaApi {
     });
   }
 
+  async confirmHandoff(sessionId: string): Promise<void> {
+    await this.send('POST', `/derivaciones/${encodeURIComponent(sessionId)}/confirmar`);
+  }
+
   private async request(method: 'GET' | 'POST', path: string): Promise<Recommendation> {
+    const response = await this.send(method, path);
+    let body: unknown;
+    try {
+      body = await response.json();
+    } catch {
+      throw new CajaError('server');
+    }
+    return toRecommendation(body);
+  }
+
+  /** Llamada autenticada con el tiempo límite y la traducción de estados HTTP a `CajaError`. */
+  private async send(method: 'GET' | 'POST', path: string): Promise<Response> {
     const session = this.session();
     if (!session) {
       this.logout();
@@ -171,13 +187,6 @@ export class HttpCajaApi implements CajaApi {
     if (response.status === 404) throw new CajaError('not_found');
     if (response.status === 400) throw new CajaError('invalid_code');
     if (!response.ok) throw new CajaError('server');
-
-    let body: unknown;
-    try {
-      body = await response.json();
-    } catch {
-      throw new CajaError('server');
-    }
-    return toRecommendation(body);
+    return response;
   }
 }

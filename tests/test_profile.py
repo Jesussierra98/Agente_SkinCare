@@ -91,7 +91,11 @@ def test_valor_invalido_reformula_una_vez_y_luego_no_proporcionado(campo: str, v
     assert campo in state.no_proporcionado
 
 
-@given(campo=st.sampled_from(CAMPOS), valor=st.text(max_size=80))
+# Texto libre casi nunca es una categoría válida: se mezcla con categorías reales para que `assume` no descarte casi todo.
+SOME_VALID = ["grasa/acneica", "seca/tensa", "brotes", "manchas", "hidratacion", "$", "$$", "$$$", "brillante", "ligera"]
+
+
+@given(campo=st.sampled_from(CAMPOS), valor=st.one_of(st.text(max_size=80), st.sampled_from(SOME_VALID)))
 def test_un_valor_aceptado_siempre_queda_guardado_y_resuelve_el_campo(campo: str, valor: str) -> None:
     state = ProfileState()
     result = state.apply(campo, valor)

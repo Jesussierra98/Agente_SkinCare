@@ -1,4 +1,4 @@
-"""Configuración por variables de entorno. Cada valor inválido usa uno seguro y se registra."""
+﻿"""Configuración por variables de entorno. Cada valor inválido usa uno seguro y se registra."""
 
 from __future__ import annotations
 
@@ -33,7 +33,8 @@ def parse_restart_after(raw: str | None) -> int:
         return 420
     try:
         value = float(raw)
-        if 0 < value < 480:
+        # Se compara el entero resultante: "0.5" se trunca a 0 y no cumple 0 < n < 480.
+        if 0 < value < 480 and 0 < int(value) < 480:
             return int(value)
     except ValueError:
         pass
@@ -83,6 +84,21 @@ class Config:
     catalog_path: Path
     guide_path: Path
     min_exchanges: int
+    guardrail_id: str
+    guardrail_version: str
+    kb_id: str
+    pubmed_enabled: bool
+    products_table: str
+    sessions_table: str
+    recommendations_table: str
+    handoff_topic_arn: str
+    handoff_confirm_url: str
+    production: bool
+
+
+def parse_bool(raw: str | None) -> bool:
+    """`true`, `1`, `yes` u `on` (sin distinguir mayúsculas) activan; cualquier otro valor es `false`."""
+    return (raw or "").strip().lower() in {"true", "1", "yes", "on"}
 
 
 def default_catalog(repo_root: Path) -> Path:
@@ -111,4 +127,14 @@ def load_config(env: dict[str, str] | None = None) -> Config:
         catalog_path=Path(e.get("CATALOG_PATH") or str(default_catalog(repo_root))),
         guide_path=guide_path,
         min_exchanges=parse_min_exchanges(e.get("MIN_EXCHANGES")),
+        guardrail_id=e.get("GUARDRAIL_ID", ""),
+        guardrail_version=e.get("GUARDRAIL_VERSION", ""),
+        kb_id=e.get("KB_ID", ""),
+        pubmed_enabled=parse_bool(e.get("PUBMED_ENABLED")),
+        products_table=e.get("PRODUCTS_TABLE", "ultra-productos"),
+        sessions_table=e.get("SESSIONS_TABLE", "ultra-sesiones"),
+        recommendations_table=e.get("RECOMMENDATIONS_TABLE", "ultra-recomendaciones"),
+        handoff_topic_arn=e.get("HANDOFF_TOPIC_ARN", ""),
+        handoff_confirm_url=e.get("HANDOFF_CONFIRM_URL", ""),
+        production=parse_bool(e.get("PRODUCTION")),
     )

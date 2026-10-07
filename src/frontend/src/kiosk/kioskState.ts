@@ -1,8 +1,8 @@
 import type { Reading, RoutineItem } from '../data/sampleRoutine';
-import type { VoiceEvent } from '../voice/VoiceSession';
+import type { VoiceErrorCode, VoiceEvent } from '../voice/VoiceSession';
 import type { Language } from './i18n';
 
-export type Phase = 'idle' | 'connecting' | 'active' | 'lost';
+export type Phase = 'idle' | 'requesting_mic' | 'connecting' | 'active' | 'lost' | 'ended';
 
 export interface TranscriptLine {
   id: number;
@@ -21,7 +21,7 @@ export interface KioskState {
   handoff: 'pendiente' | 'confirmada' | null;
   muted: boolean;
   lastActivityAt: number;
-  error: 'mic_denied' | 'connect_failed' | 'timeout' | null;
+  error: VoiceErrorCode | null;
   nextId: number;
 }
 
@@ -42,6 +42,7 @@ export const initialKioskState: KioskState = {
 export type KioskAction =
   | { type: 'start' }
   | { type: 'reset' }
+  | { type: 'hangup' }
   | { type: 'setMuted'; muted: boolean }
   | { type: 'voice'; event: VoiceEvent; now: number }
   | { type: 'local-text'; text: string };
@@ -52,6 +53,9 @@ export function kioskReducer(state: KioskState, action: KioskAction): KioskState
       return { ...initialKioskState, phase: 'connecting', language: state.language };
     case 'reset':
       return { ...initialKioskState, language: 'es' };
+    case 'hangup':
+      // La conversación se cerró a propósito: no queda nada en pantalla y se vuelve al inicio.
+      return { ...initialKioskState, phase: 'ended' };
     case 'setMuted':
       return { ...state, muted: action.muted };
     case 'local-text':
@@ -63,6 +67,8 @@ export function kioskReducer(state: KioskState, action: KioskAction): KioskState
 
 function applyVoiceEvent(state: KioskState, event: VoiceEvent, now: number): KioskState {
   switch (event.type) {
+    case 'phase':
+      return { ...state, phase: event.phase };
     case 'ready':
       return { ...state, phase: 'active', language: event.language };
     case 'language':

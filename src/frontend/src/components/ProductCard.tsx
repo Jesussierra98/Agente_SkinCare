@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { RoutineItem } from '../data/sampleRoutine';
 import type { KioskStrings } from '../kiosk/i18n';
-import { formatPrice, truncate } from '../lib/format';
+import { productCardViewModel } from '../lib/viewModels';
 
 interface Props {
   t: KioskStrings;
@@ -45,6 +45,7 @@ export function ProductCard({ t, item, open, onToggle, onClose }: Props) {
     };
   }, [open, onClose]);
 
+  const view = productCardViewModel(item);
   const stepLabel = t.stepNames[item.paso - 1]!;
   const showImage = item.imagenUrl !== '' && !imgFailed;
   const popoverId = `uso-${item.sku}`;
@@ -55,10 +56,10 @@ export function ProductCard({ t, item, open, onToggle, onClose }: Props) {
         <span className="font-display text-[30px] leading-none text-ink" aria-hidden="true">
           {item.paso}
         </span>
-        <h3 className="text-[13px] font-semibold uppercase tracking-[0.14em] text-ink">
+        <h2 className="text-[13px] font-semibold uppercase tracking-[0.14em] text-ink">
           <span className="sr-only">{item.paso}. </span>
           {stepLabel}
-        </h3>
+        </h2>
       </div>
 
       <div className="flex flex-1 flex-col px-4 pb-4 pt-4">
@@ -77,17 +78,15 @@ export function ProductCard({ t, item, open, onToggle, onClose }: Props) {
           )}
         </div>
 
-        <p className="mt-4 text-[12px] uppercase tracking-[0.14em] text-muted">{item.marca}</p>
-        <p className="mt-1 text-[17px] font-semibold leading-[21px] text-ink">{item.nombre}</p>
-        <p className="mt-2 text-[14px] leading-[19px] text-muted">
-          {truncate(item.razonCatalogo, 120)}
-        </p>
+        <p className="mt-4 text-[12px] uppercase tracking-[0.14em] text-muted">{view.marca}</p>
+        <p className="mt-1 text-[17px] font-semibold leading-[21px] text-ink">{view.nombre}</p>
+        <p className="mt-2 text-[14px] leading-[19px] text-muted">{view.razon}</p>
 
         <div className="mt-auto flex flex-wrap items-baseline justify-between gap-x-2 gap-y-0.5 pt-4 text-[12px] text-ink">
           <span className="whitespace-nowrap">
-            {t.sku} {item.sku}
+            {t.sku} {view.sku}
           </span>
-          <span className="whitespace-nowrap font-bold">{formatPrice(item.precioCents)}</span>
+          <span className="whitespace-nowrap font-bold">{view.precio}</span>
         </div>
         <button
           ref={triggerRef}

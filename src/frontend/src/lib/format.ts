@@ -26,3 +26,14 @@ export function formatDateTime(iso: string): string {
 export function isValidCode(raw: string): boolean {
   return /^[A-Z]{3}-\d{3}$/.test(raw.trim().toUpperCase());
 }
+
+/** Alias de `formatPrice`: `$1,234.50` (el diseño aceptado no lleva «MXN», ver ui-reference.md fila 5). */
+export const formatMXN = formatPrice;
+
+/** Inversa de `formatPrice`: `$1,234.50` → 123450 centavos. `null` si el texto no tiene ese formato. */
+export function parsePrice(text: string): number | null {
+  const m = /^(-?)\$(\d{1,3}(?:,\d{3})*|\d+)\.(\d{2})$/.exec(text.trim());
+  if (!m) return null;
+  const cents = Number(m[2]!.replace(/,/g, '')) * 100 + Number(m[3]);
+  return m[1] === '-' ? -cents : cents;
+}

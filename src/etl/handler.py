@@ -23,15 +23,26 @@ log = logging.getLogger("etl.handler")
 CONFIG_DIR = Path(__file__).resolve().parent / "config"
 
 
+def s3_objects(event: dict[str, Any]) -> list[tuple[str, str]]:
+    """Pares `(bucket, clave)` del evento, venga de una notificación de S3 o de EventBridge (`Object Created`).
+
+    La notificación de S3 trae la clave codificada como URL (`+` por espacio); EventBridge la trae tal cual.
+    """
+    if "detail" in event:
+        detail = event["detail"]
+        return [(detail["bucket"]["name"], detail["object"]["key"])]
+    return [
+        (r["s3"]["bucket"]["name"], unquote_plus(r["s3"]["object"]["key"])) for r in event.get("Records", [])
+    ]
+
+
 def handler(event: dict[str, Any], context: Any = None) -> dict[str, Any]:
     import boto3
 
     results = []
     s3 = boto3.client("s3")
     cfg = load_config(CONFIG_DIR)
-    for record in event.get("Records", []):
-        bucket = record["s3"]["bucket"]["name"]
-        key = unquote_plus(record["s3"]["object"]["key"])
+    for bucket, key in s3_objects(event):
         if not key.startswith("raw/") or not key.lower().endswith(".csv"):
             log.info("objeto ignorado: s3://%s/%s", bucket, key)
             continue

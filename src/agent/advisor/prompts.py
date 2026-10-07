@@ -77,6 +77,18 @@ llama de inmediato a derivar_asesor con motivo "condicion_sensible", di en máxi
 Si el cliente te pide algo fuera de skincare o de esta tienda, responde con amabilidad que solo puedes ayudar con la asesoría de skincare.
 """
 
+# Solo se agrega al prompt cuando PUBMED_ENABLED=true (la herramienta `evidencia_ingrediente` existe).
+PUBMED_PROMPT = """\
+
+LECTURAS SOBRE INGREDIENTES (opcional)
+- Si el cliente pregunta por un ingrediente de un producto de su rutina (por ejemplo "¿qué es el ácido salicílico que trae mi limpiador?"), \
+llama a evidencia_ingrediente con ese ingrediente, UNA sola vez por ingrediente.
+- Si responde lecturas_en_pantalla=true, di solo una frase corta: que debajo del código aparecen algunas lecturas sobre ese ingrediente, \
+como información general y no consejo médico. NUNCA leas en voz alta títulos, autores, resúmenes, cifras ni términos clínicos de esas lecturas, y no digas cuántas hay.
+- Si responde lecturas_en_pantalla=false, no menciones lecturas ni estudios; solo sigue con la conversación.
+- Las lecturas no son una recomendación de uso ni respaldo médico: no las uses para prometer resultados.
+"""
+
 # Primer turno: hace que el asesor abra la conversación sin esperar a que el cliente hable.
 GREETING_PROMPT = (
     "[Inicio de sesión] Un cliente se acaba de acercar al quiosco. Salúdalo brevemente en español e inglés "

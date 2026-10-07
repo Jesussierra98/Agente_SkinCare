@@ -13,7 +13,10 @@ export type VoiceEvent =
   | { type: 'readings'; ingrediente: string; articulos: Reading[] }
   | { type: 'handoff'; motivo: string; estado: 'pendiente' | 'confirmada' }
   | { type: 'connection_lost'; reason: string }
-  | { type: 'error'; code: 'mic_denied' | 'connect_failed' | 'timeout' };
+  | { type: 'phase'; phase: 'requesting_mic' | 'connecting' }
+  | { type: 'error'; code: VoiceErrorCode };
+
+export type VoiceErrorCode = 'mic_denied' | 'connect_failed' | 'timeout' | 'not_provisioned' | 'auth_failed';
 
 export type VoiceListener = (event: VoiceEvent) => void;
 

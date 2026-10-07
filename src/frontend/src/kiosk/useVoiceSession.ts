@@ -45,7 +45,7 @@ export function useVoiceSession(createSession: () => VoiceSession) {
 
   const hangup = useCallback(() => {
     close();
-    dispatch({ type: 'reset' });
+    dispatch({ type: 'hangup' });
   }, [close]);
 
   const setMuted = useCallback((muted: boolean) => {

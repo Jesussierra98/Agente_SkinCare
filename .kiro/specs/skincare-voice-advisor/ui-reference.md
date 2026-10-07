@@ -113,3 +113,14 @@ Los diseños agregan o cambian cosas que no están en los requerimientos. Hasta 
 | 14 | Popover "Ver modo de uso" | El diseño no lo muestra abierto. | Panel blanco sobre la tarjeta con el texto y un botón "Cerrar". Cierra con Escape y clic fuera. |
 | 15 | Fuentes | No se tienen los archivos originales. | Bodoni Moda (títulos, con eje de tamaño óptico) y Hanken Grotesk (texto) de Fontsource. Son aproximaciones. |
 | 16 | Idioma de la pantalla de inicio | Sin selector, no hay conversación que detectar antes de iniciar. | Arranca en español; al empezar la sesión el idioma sigue al de la conversación. |
+
+## Pantallas y textos agregados sin diseño (pendientes de revisión)
+
+| # | Tema | Situación | Hoy |
+|---|---|---|---|
+| 17 | Tarjeta de un paso sin producto | Req. 18.3 pide una tarjeta que indique que no hay producto para ese paso; el diseño no la muestra. | Mismo encabezado que las demás (`N PASO`) y el texto «No hay producto disponible para este paso.» / «No product available for this step.». |
+| 18 | Alta del dispositivo (`/kiosk/setup`) | DD-03 exige aprovisionar el iPad una vez con el usuario de servicio. Sin diseño. | Formulario mínimo «Configurar dispositivo» (Usuario, Contraseña, «Guardar dispositivo»), solo para el responsable de la tienda. |
+| 19 | Confirmación de derivación (`/derivacion/<session_id>`) | Req. 12.7 y DD-14. Sin diseño. | En el marco de Caja: inicio de sesión y botón «Confirmar que lo atenderé». |
+| 20 | Errores de configuración del dispositivo | Sin diseño. | Mensaje en rojo sobre el botón de inicio: «Este dispositivo todavía no está configurado…». |
+| 21 | Encabezados de las tarjetas de paso | Para que el orden de títulos sea correcto para lectores de pantalla, los pasos pasaron de `h3` a `h2`. | Sin cambio visual. |
+| 22 | «Tu rutina» por debajo de 1024 px | Req. 18.3 pide 2 columnas entre 600 y 1023 px y 1 por debajo de 600 px; el diseño solo existe a 1194 px. Con la columna lateral de 300 px fija, a 420 px las tarjetas quedaban tapadas por el QR. | Con 1024 px o más no cambia nada. Por debajo, la tarjeta «PARA LA CAJA» y las lecturas pasan debajo de las tarjetas y los márgenes se reducen. Sin diseño para esos anchos: confirmar o entregar uno. |

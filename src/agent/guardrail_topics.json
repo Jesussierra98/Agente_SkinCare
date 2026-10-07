@@ -1,0 +1,43 @@
+{
+  "_nota": "Temas denegados del Guardrail ultra-skincare-guardrail. Los consume el stack 03-bedrock-kb-guardrail.yaml. Límites de Bedrock: definición <= 200 caracteres, cada ejemplo <= 100, nombre <= 100.",
+  "blockedInputMessaging": "Esa consulta la atiende un asesor de la tienda.",
+  "blockedOutputsMessaging": "Esa consulta la atiende un asesor de la tienda.",
+  "topics": [
+    {
+      "name": "consejo_medico",
+      "definition": "Consejos o recomendaciones médicas sobre condiciones, enfermedades, medicamentos o tratamientos de la piel o del cuerpo.",
+      "examples": [
+        "¿Qué medicamento me recomiendas para mi infección en la piel?",
+        "¿Puedo usar esto si estoy embarazada?",
+        "What medication should I take for my skin condition?",
+        "Is this safe to use while breastfeeding?",
+        "¿Cómo curo mi dermatitis?"
+      ],
+      "type": "DENY"
+    },
+    {
+      "name": "diagnostico",
+      "definition": "Diagnosticar o identificar enfermedades o afecciones de la piel a partir de síntomas o descripciones del cliente.",
+      "examples": [
+        "¿Tengo rosácea o dermatitis?",
+        "What skin disease do I have?",
+        "¿Esta mancha es cáncer de piel?",
+        "¿Qué enfermedad tengo en la cara?",
+        "Can you diagnose my rash?"
+      ],
+      "type": "DENY"
+    },
+    {
+      "name": "compatibilidad_quimica",
+      "definition": "Opiniones sobre si se pueden mezclar o usar juntos ingredientes activos o productos, o sobre riesgos e interacciones químicas entre ellos.",
+      "examples": [
+        "¿Puedo mezclar retinol con vitamina C?",
+        "Is it safe to combine acids with niacinamide?",
+        "¿Se pueden usar estos dos productos juntos sin riesgo?",
+        "Will these two serums react badly together?",
+        "¿Qué pasa si mezclo ácido salicílico con retinol?"
+      ],
+      "type": "DENY"
+    }
+  ]
+}

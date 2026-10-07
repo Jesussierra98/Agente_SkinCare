@@ -1,0 +1,12 @@
+.git
+.kiro
+out
+tests
+scripts
+node_modules
+src/frontend
+src/etl/*.csv
+src/etl/*.xlsx
+**/__pycache__
+**/.pytest_cache
+**/.env*

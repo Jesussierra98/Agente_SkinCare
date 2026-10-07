@@ -2,6 +2,8 @@
 -r src/etl/requirements.txt
 pytest==9.1.1
 hypothesis==6.168.5
-moto[s3,dynamodb]==5.2.3
+moto[s3,dynamodb,sns,sqs]==5.2.3
 freezegun==1.5.5
 jsonschema==4.26.0
+PyYAML==6.0.3
+cfn-lint==1.57.2

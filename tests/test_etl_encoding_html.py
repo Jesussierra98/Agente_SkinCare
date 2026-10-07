@@ -157,3 +157,22 @@ def test_sanitizar_no_deja_etiquetas_es_idempotente_y_limita_saltos(parts: list[
         assert result == result.strip()
     else:
         assert result == raw
+
+
+# ---- Feature: skincare-voice-advisor, Property 3: se omiten exactamente las filas inválidas y el resto queda limpio ---
+
+@given(st.lists(st.tuples(st.text(alphabet="abc xyz019áéíóúñ", min_size=1, max_size=12), st.booleans()), min_size=1, max_size=12))
+def test_decode_rows_omite_exactamente_las_filas_invalidas(rows: list[tuple[str, bool]]) -> None:
+    # 0x81 no existe en cp1252 ni forma UTF-8 válido; su presencia hace la fila irreparable.
+    lines = [b"sku,nombre"]
+    for i, (text, invalid) in enumerate(rows):
+        body = text.encode("cp1252")
+        lines.append(f"{i},".encode() + (body + b"\x81" if invalid else body))
+    data = b"\n".join(lines) + b"\n"
+    good, skipped, _ = decode_rows(data)
+    assert skipped == [i + 2 for i, (_, invalid) in enumerate(rows) if invalid]
+    valid_names = [t for t, invalid in rows if not invalid]
+    assert [r["nombre"] for r in good] == valid_names
+    for row in good:
+        row["nombre"].encode("utf-8")  # UTF-8 limpio, sin sustitutos ni U+FFFD
+        assert "\ufffd" not in row["nombre"]

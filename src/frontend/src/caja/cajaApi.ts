@@ -1,5 +1,6 @@
 import { SAMPLE_CODE, SAMPLE_REC_ID, SAMPLE_ROUTINE } from '../data/sampleRoutine';
 import { isValidCode } from '../lib/format';
+import { isUuidV4 } from '../lib/qr';
 
 export interface CajaProduct {
   paso: 1 | 2 | 3 | 4;
@@ -42,6 +43,8 @@ export interface CajaApi {
   /** Acepta `rec_id` (UUID) o código corto. */
   getRecommendation(idOrCode: string): Promise<Recommendation>;
   markAttended(recId: string): Promise<Recommendation>;
+  /** Un asesor confirma que atenderá la derivación de una sesión del Kiosco (`session_id` UUID). */
+  confirmHandoff(sessionId: string): Promise<void>;
 }
 
 /** Precio de la API (`"1234.50"`) a centavos enteros, sin pasar por punto flotante. `null` si el formato no es válido. */
@@ -52,23 +55,7 @@ export function priceToCents(price: string): number | null {
 }
 
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
-const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-
-/**
- * Extrae el `rec_id` de una URL de QR `https://<dominio>/caja?rec=<uuid>`.
- * Con `allowedHost` (por ejemplo `tienda.ejemplo.com`), un QR de otro dominio se rechaza.
- */
-export function parseQrUrl(text: string, allowedHost?: string): string | null {
-  try {
-    const url = new URL(text.trim());
-    if (allowedHost && url.host.toLowerCase() !== allowedHost.trim().toLowerCase()) return null;
-    if (url.pathname.replace(/\/+$/, '') !== '/caja') return null;
-    const rec = url.searchParams.get('rec');
-    return rec && UUID_V4.test(rec) ? rec : null;
-  } catch {
-    return null;
-  }
-}
+export { parseQrUrl } from '../lib/qr';
 
 /** Implementación en memoria para revisar el diseño. Usuario de prueba: `caja` con cualquier contraseña. */
 export class MockCajaApi implements CajaApi {
@@ -116,7 +103,7 @@ export class MockCajaApi implements CajaApi {
     await delay(400);
     const raw = idOrCode.trim();
     let found: Recommendation | undefined;
-    if (UUID_V4.test(raw)) {
+    if (isUuidV4(raw)) {
       found = [...this.store.values()].find((r) => r.recId === raw.toLowerCase());
     } else {
       const code = raw.toUpperCase();
@@ -138,5 +125,11 @@ export class MockCajaApi implements CajaApi {
       rec.fechaAtendida = new Date().toISOString();
     }
     return structuredClone(rec);
+  }
+
+  async confirmHandoff(sessionId: string): Promise<void> {
+    if (!this.loggedIn) throw new CajaError('expired');
+    await delay(300);
+    if (!isUuidV4(sessionId)) throw new CajaError('not_found');
   }
 }

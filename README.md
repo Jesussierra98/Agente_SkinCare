@@ -6,13 +6,15 @@ Diseños de pantalla: `.kiro/specs/skincare-voice-advisor/design/`.
 ## Estructura
 
 ```
-cloudformation/   Stacks de infraestructura (pendiente)
-src/etl/          ETL del catálogo (pendiente)
-src/agent/        Agente de voz (pendiente)
-src/caja_api/     Lambda de Caja (rutas listas; falta la infraestructura)
+cloudformation/   5 stacks de infraestructura (validados con cfn-lint; ninguno desplegado todavía)
+src/etl/          ETL del catálogo (CSV → DynamoDB + Knowledge Base)
+src/agent/        Agente de voz: servidor local (server.py) y Runtime de AgentCore (agent.py)
+src/caja_api/     Lambda de Caja
 src/frontend/     Vista_Cliente (Kiosco) y Vista_Caja (React + Vite + Tailwind)
 catalog/          Catálogo CSV y catálogo de muestra
-scripts/          Despliegue y pruebas de humo
+scripts/          Despliegue, empaquetado, pruebas de humo y evaluación conversacional
+tests/            Pruebas de Python (pytest); tests/integration necesita un despliegue real
+docs/             Guía de piloto
 ```
 
 ## Prototipo del frontend (datos simulados)
@@ -137,6 +139,38 @@ VITE_STORE_DOMAIN=tienda.ejemplo.com   # opcional: solo acepta QR de ese dominio
 Si falta cualquiera de las tres primeras, se usa la API simulada. El inicio de sesión usa SRP (la contraseña no viaja
 en claro) y la sesión vive en `sessionStorage`. La cámara exige HTTPS o `localhost`. Pruebas del frontend: `npm test`.
 
-## Orden de despliegue (cuando exista la infraestructura)
+## Pruebas
+
+```powershell
+& $env:LOCALAPPDATA\skincare-venv\Scripts\python.exe -m pip install -r requirements-dev.txt
+$env:PYTHONUTF8 = "1"
+& $env:LOCALAPPDATA\skincare-venv\Scripts\python.exe -m pytest          # ETL, agente, Caja, plantillas, despliegue
+& $env:LOCALAPPDATA\skincare-venv\Scripts\cfn-lint.exe cloudformation/*.yaml
+cd src/frontend; npm test; npm run typecheck                            # Kiosco y Caja (vitest, axe-core)
+```
+
+Con el agente local en marcha, `python scripts/eval_conversations.py` conversa con Nova 2 Sonic y Claude Haiku reales por
+texto y comprueba idioma, la frase de catálogo cerrado, la derivación clínica y la de mezcla de activos, y la rutina
+con código. Es probabilístico: repítelo con `--repeat 3`. La prueba de humo `scripts/smoke_test.py --url ws://127.0.0.1:8080/ws`
+hace lo mismo que se usará contra AgentCore. Lo que no se puede automatizar está en `docs/guia-piloto.md`.
+
+## Despliegue en AWS (us-east-1)
+
+Nada está desplegado todavía. `scripts/deploy.ps1` (o `deploy.sh`) corre los cinco stacks en este orden, después publica la
+imagen del agente, crea el Runtime en AgentCore, sube la SPA y lanza la prueba de humo:
 
 `ultra-skincare-storage` → `ultra-skincare-auth` → `ultra-skincare-bedrock` → `ultra-skincare-compute` → `ultra-skincare-frontend`.
+
+```powershell
+./scripts/deploy.ps1 --plan --budget-email ti@ejemplo.com      # solo muestra lo que haría
+./scripts/deploy.ps1 --budget-email ti@ejemplo.com --store-domain tienda.ejemplo.com
+```
+
+Antes de tocar la cuenta muestra los recursos y pide confirmación. Necesita el AWS CLI con credenciales, Node 20 y Docker con
+`buildx` (la imagen es ARM64). Opciones de interés: `--domain-name` y `--certificate-arn` (sin dominio propio CloudFront no deja fijar TLS 1.2
+como mínimo), `--handoff-email` (quién recibe las derivaciones), `--pubmed-api-key` y `--skip-agent`.
+Cuando termina, sube el CSV del catálogo a `s3://feeder-skincare-catalog-<cuenta>/raw/` y da de alta un usuario del grupo `kiosco` para cada iPad
+(se configura una vez en `/kiosk/setup`) y uno del grupo `caja` para cada cajero.
+
+Lo que **no** se ha probado contra AWS: la creación de los recursos (Knowledge Base con S3 Vectors, Guardrail, AgentCore), la imagen Docker y el
+WebSocket autenticado. Las reglas de `cloudformation/guard/` tampoco se han ejecutado (no hay cfn-guard instalado).

@@ -1,0 +1,42 @@
+# Reglas de cfn-guard (Req. 21.6, 21.7, 21.9, 22.3). Uso:
+#   cfn-guard validate --data cloudformation/ --rules cloudformation/guard/ultra-skincare.guard
+# Las mismas comprobaciones (y más) corren sin cfn-guard en tests/test_cloudformation.py.
+
+let buckets = Resources.*[ Type == 'AWS::S3::Bucket' ]
+let tables = Resources.*[ Type == 'AWS::DynamoDB::Table' ]
+let distributions = Resources.*[ Type == 'AWS::CloudFront::Distribution' ]
+let roles = Resources.*[ Type == 'AWS::IAM::Role' ]
+
+rule s3_sin_acceso_publico when %buckets !empty {
+    %buckets {
+        Properties.PublicAccessBlockConfiguration.BlockPublicAcls == true
+        Properties.PublicAccessBlockConfiguration.BlockPublicPolicy == true
+        Properties.PublicAccessBlockConfiguration.IgnorePublicAcls == true
+        Properties.PublicAccessBlockConfiguration.RestrictPublicBuckets == true
+    }
+}
+
+rule s3_cifrado when %buckets !empty {
+    %buckets {
+        Properties.BucketEncryption.ServerSideEncryptionConfiguration exists
+    }
+}
+
+rule dynamodb_cifrada_con_kms when %tables !empty {
+    %tables {
+        Properties.SSESpecification.SSEEnabled == true
+        Properties.SSESpecification.SSEType == 'KMS'
+    }
+}
+
+rule cloudfront_solo_https when %distributions !empty {
+    %distributions {
+        Properties.DistributionConfig.DefaultCacheBehavior.ViewerProtocolPolicy == 'redirect-to-https'
+    }
+}
+
+rule iam_sin_acciones_comodin when %roles !empty {
+    %roles {
+        Properties.Policies[*].PolicyDocument.Statement[*].Action != '*'
+    }
+}
