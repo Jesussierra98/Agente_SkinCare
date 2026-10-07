@@ -4,6 +4,8 @@ import tailwindcss from '@tailwindcss/vite';
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
+  // amazon-cognito-identity-js usa `global`, que no existe en el navegador.
+  define: { global: 'globalThis' },
   server: { port: 5173, host: true },
   test: {
     environment: 'jsdom',

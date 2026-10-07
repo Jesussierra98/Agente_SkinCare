@@ -1,7 +1,8 @@
-import { useRef, useState, type ChangeEvent, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from 'react';
 import { CameraIcon, UploadIcon } from '../components/Icons';
 import { isValidCode } from '../lib/format';
 import { CajaFrame } from './CajaFrame';
+import { READER_ID, scanImageFile, startCameraScan, type CameraScan } from './qrReader';
 
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 
@@ -13,18 +14,32 @@ interface Props {
   onExit: () => void;
   /** Busca por código escrito. */
   onSearchCode: (code: string) => void;
-  /** Prototipo: simula la lectura de un QR (cámara o foto). */
-  onScanned: () => void;
+  /** Recibe el texto del QR leído con la cámara o desde una foto. */
+  onScanned: (text: string) => void;
   busy: boolean;
   error: string | null;
   initialCode?: string;
+  /**
+   * Solo para el prototipo con datos simulados: si se indica, la cámara y la foto no leen nada real y
+   * entregan este texto, para poder revisar el flujo sin un QR.
+   */
+  simulatedQr?: string;
 }
 
-export function ScannerScreen({ onExit, onSearchCode, onScanned, busy, error, initialCode = '' }: Props) {
+export function ScannerScreen({ onExit, onSearchCode, onScanned, busy, error, initialCode = '', simulatedQr }: Props) {
   const [code, setCode] = useState(initialCode);
   const [localError, setLocalError] = useState<string | null>(null);
   const [scanning, setScanning] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+  const camera = useRef<CameraScan | null>(null);
+
+  // La cámara se apaga al salir de la pantalla.
+  useEffect(() => {
+    return () => {
+      void camera.current?.stop();
+      camera.current = null;
+    };
+  }, []);
 
   function submit(e: FormEvent) {
     e.preventDefault();
@@ -37,17 +52,34 @@ export function ScannerScreen({ onExit, onSearchCode, onScanned, busy, error, in
     onSearchCode(normalized);
   }
 
-  function startCamera() {
+  async function startCamera() {
     setLocalError(null);
     setScanning(true);
-    // Prototipo: la cámara real se conecta más adelante; aquí se simula una lectura.
-    setTimeout(() => {
+    if (simulatedQr !== undefined) {
+      setTimeout(() => {
+        setScanning(false);
+        onScanned(simulatedQr);
+      }, 1400);
+      return;
+    }
+    try {
+      let delivered = false;
+      camera.current = await startCameraScan((text) => {
+        if (delivered) return; // una sola lectura por apertura de la cámara
+        delivered = true;
+        void camera.current?.stop();
+        camera.current = null;
+        setScanning(false);
+        onScanned(text);
+      });
+    } catch {
+      camera.current = null;
       setScanning(false);
-      onScanned();
-    }, 1400);
+      setLocalError('No se pudo abrir la cámara. Revisa el permiso del navegador, sube una foto o escribe el código.');
+    }
   }
 
-  function onFile(e: ChangeEvent<HTMLInputElement>) {
+  async function onFile(e: ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     e.target.value = '';
     if (!file) return;
@@ -56,7 +88,15 @@ export function ScannerScreen({ onExit, onSearchCode, onScanned, busy, error, in
       return;
     }
     setLocalError(null);
-    onScanned();
+    if (simulatedQr !== undefined) {
+      onScanned(simulatedQr);
+      return;
+    }
+    try {
+      onScanned(await scanImageFile(file));
+    } catch {
+      setLocalError('No pudimos leer un QR en la foto. Intenta de nuevo o escribe el código.');
+    }
   }
 
   const message = localError ?? error;
@@ -68,9 +108,10 @@ export function ScannerScreen({ onExit, onSearchCode, onScanned, busy, error, in
           Lee el QR del cliente
         </h1>
 
-        <div className="relative mt-[18px] h-[300px] bg-ink">
+        <div className="relative mt-[18px] h-[300px] overflow-hidden bg-ink">
+          <div id={READER_ID} className="absolute inset-0" />
           <div
-            className={`absolute left-1/2 top-[40px] h-[170px] w-[170px] -translate-x-1/2 border-2 border-dashed ${
+            className={`pointer-events-none absolute left-1/2 top-[40px] h-[170px] w-[170px] -translate-x-1/2 border-2 border-dashed ${
               scanning ? 'border-white' : 'border-white/90'
             }`}
             aria-hidden="true"
@@ -82,7 +123,7 @@ export function ScannerScreen({ onExit, onSearchCode, onScanned, busy, error, in
 
         <button
           type="button"
-          onClick={startCamera}
+          onClick={() => void startCamera()}
           disabled={busy || scanning}
           className="mt-5 flex h-[60px] items-center justify-center gap-3 bg-brand text-[18px] font-semibold text-white hover:bg-[#194035] disabled:opacity-60"
         >
@@ -103,7 +144,7 @@ export function ScannerScreen({ onExit, onSearchCode, onScanned, busy, error, in
           type="file"
           accept="image/jpeg,image/png"
           className="hidden"
-          onChange={onFile}
+          onChange={(e) => void onFile(e)}
           aria-label="Subir la foto del QR"
         />
 

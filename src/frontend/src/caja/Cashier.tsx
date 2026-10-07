@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { SAMPLE_REC_ID } from '../data/sampleRoutine';
-import { CajaError, MockCajaApi, type CajaApi, type Recommendation } from './cajaApi';
+import { CajaError, MockCajaApi, parseQrUrl, type CajaApi, type Recommendation } from './cajaApi';
+import { allowedQrHost, createCajaApi } from './config';
 import { LoginScreen } from './LoginScreen';
 import { ResultScreen } from './ResultScreen';
 import { ScannerScreen } from './ScannerScreen';
@@ -14,6 +15,8 @@ function messageFor(err: unknown): string {
         return 'No encontramos esa recomendación. Revisa el código o lee otro QR.';
       case 'invalid_code':
         return 'El código debe tener 3 letras, un guion y 3 números, por ejemplo ABC-123.';
+      case 'forbidden':
+        return 'Este usuario no tiene permiso para consultar recomendaciones.';
       case 'network':
       case 'server':
         return 'No se pudo completar la consulta. Inténtalo de nuevo.';
@@ -25,8 +28,9 @@ function messageFor(err: unknown): string {
 }
 
 export function Cashier() {
-  // Prototipo: API simulada. Usuario de prueba `caja` con cualquier contraseña.
-  const api: CajaApi = useMemo(() => new MockCajaApi(), []);
+  // API real (Cognito + API Gateway) si el entorno la configura; si no, la simulada: usuario `caja`, cualquier contraseña.
+  const api: CajaApi = useMemo(() => createCajaApi(), []);
+  const simulated = api instanceof MockCajaApi;
   const [view, setView] = useState<View>('login');
   const [notice, setNotice] = useState<string | null>(null);
   const [rec, setRec] = useState<Recommendation | null>(null);
@@ -118,8 +122,16 @@ export function Cashier() {
       error={error}
       initialCode={lastCode}
       onSearchCode={lookup}
-      // Prototipo: una lectura de QR equivale a abrir la rutina de muestra.
-      onScanned={() => lookup(SAMPLE_REC_ID)}
+      onScanned={(text) => {
+        const recId = parseQrUrl(text, allowedQrHost());
+        if (recId === null) {
+          setError('Ese QR no corresponde a una recomendación. Prueba con otro o escribe el código.');
+          return;
+        }
+        void lookup(recId);
+      }}
+      // Con datos simulados, leer el QR equivale a abrir la rutina de muestra.
+      simulatedQr={simulated ? `https://tienda.example/caja?rec=${SAMPLE_REC_ID}` : undefined}
     />
   );
 }

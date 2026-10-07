@@ -181,7 +181,7 @@ def normalize_skin_type(value: str) -> str:
         return "Grasa"
     if any(w in key for w in ("seca", "seco", "dry", "deshidratad")):
         return "Seca"
-    if any(w in key for w in ("mixta", "mixto", "combinada", "combination")):
+    if any(w in key for w in ("mixta", "mixto", "combinada", "combinacion", "combination")):
         return "Mixta"
     log.warning("tipo de piel desconocido %r; se asigna 'Todo tipo de piel'", value)
     return "Todo tipo de piel"

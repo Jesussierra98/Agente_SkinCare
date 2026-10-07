@@ -26,7 +26,9 @@ from .guide import LEVELS, Guide
 from .models import PASOS, Product, money
 from .ports import CatalogRepository, HandoffNotifier, RecommendationStore
 from .profile import TIPO_PIEL_CATALOGO, profile_query, tier_for_price
+from .pubmed import TOTAL_TIMEOUT_S
 from .routine import RoutineEngine, rank_candidates, total_price
+from .save import validate_routine_for_save
 from .session import Session, generate_codigo_corto, now_iso, start_handoff
 
 log = logging.getLogger("advisor.tools")
@@ -57,6 +59,7 @@ class Deps:
     budget_bounds: tuple[Decimal, Decimal]
     store_domain: str
     guide: Guide = field(default_factory=lambda: Guide({}))
+    pubmed: Any = None  # `PubMedConsultant`; sin él no se registra `evidencia_ingrediente` (PUBMED_ENABLED=false)
 
 
 def _fold(text: str) -> str:
@@ -69,7 +72,7 @@ def parse_pasos(text: str) -> list[str] | None:
     t = _fold(text or "").strip()
     if t in {"", "auto", "automatico", "automático"}:
         return None
-    if any(w in t for w in ("todos", "todo", "completa", "all")):
+    if any(w in t for w in ("todos", "todas", "todo", "toda", "completa", "all")):
         return list(PASOS)
     keys = {"limpi": "Limpieza", "trat": "Tratamiento", "hidrat": "Hidratación", "solar": "Protección solar", "protec": "Protección solar"}
     found = {paso for key, paso in keys.items() if key in t}
@@ -253,6 +256,10 @@ def build_tools(session: Session, deps: Deps) -> list[Any]:
         fresh = await deps.catalog.get_many([p["sku"] for p in session.routine])
         if len(fresh) != len(session.routine):
             return {"error": "no_se_guardo", "motivo": "sku_inexistente"}
+        rutina = snapshot(fresh)
+        if problems := validate_routine_for_save(rutina):
+            log.error("rutina inválida; no se guarda: %s", problems)
+            return {"error": "no_se_guardo", "motivo": "rutina_invalida", "campos": problems}
         code = None
         for _ in range(MAX_CODE_ATTEMPTS):
             candidate = generate_codigo_corto()
@@ -270,7 +277,7 @@ def build_tools(session: Session, deps: Deps) -> list[Any]:
                     "session_id": session.session_id,
                     "fecha_creacion": now_iso(),
                     "estado": "pendiente",
-                    "rutina": snapshot(fresh),
+                    "rutina": rutina,
                 }
             )
         except Exception as exc:  # noqa: BLE001
@@ -279,7 +286,15 @@ def build_tools(session: Session, deps: Deps) -> list[Any]:
         qr_url = f"{deps.store_domain.rstrip('/')}/caja?rec={rec_id}"
         session.saved = {"rec_id": rec_id, "codigo_corto": code, "qr_url": qr_url}
         await session.emit({"type": "saved", **session.saved})
-        return {"ok": True, "codigo_corto": code}
+        result: dict[str, Any] = {"ok": True, "codigo_corto": code}
+        if session.readings:
+            # Segunda escritura: si falla, la recomendación ya guardada se conserva (Req. 17.8).
+            try:
+                await deps.store.set_readings(rec_id, session.readings)
+            except Exception as exc:  # noqa: BLE001
+                log.error("no se almacenaron las lecturas: %s", exc)
+                result["warning"] = "lecturas_no_almacenadas"
+        return result
 
     def routine_summary(changed: set[str] | None = None) -> list[dict[str, Any]]:
         return [
@@ -442,7 +457,7 @@ def build_tools(session: Session, deps: Deps) -> list[Any]:
                 if tope
                 else []
             )
-            return _routine_result(session, saved["codigo_corto"], over_budget=over)
+            return _routine_result(session, saved["codigo_corto"], over_budget=over, warning=saved.get("warning"))
         finally:
             session.tools_running -= 1
 
@@ -745,7 +760,41 @@ def build_tools(session: Session, deps: Deps) -> list[Any]:
             }
         return {"derivado": True, "indicacion": "Un asesor de la tienda atenderá al cliente."}
 
-    return [
+    @tool
+    async def evidencia_ingrediente(ingrediente: str) -> dict:
+        """Muestra en la pantalla del cliente lecturas científicas de un ingrediente de SU rutina.
+
+        No devuelve los títulos: solo indica si hay lecturas en pantalla. Nunca las leas en voz alta ni las
+        resumas; si no hay lecturas, no las menciones.
+
+        Args:
+            ingrediente: Nombre de un ingrediente que aparezca en la lista de ingredientes de la rutina.
+        """
+        shown = {"lecturas_en_pantalla": False}
+        if session.recommendations_suspended or not session.routine or deps.pubmed is None:
+            return shown
+        try:
+            products = await deps.catalog.get_many([p["sku"] for p in session.routine])
+            texts = [p.ingredientes for p in products.values()]
+            result = await asyncio.wait_for(
+                asyncio.to_thread(deps.pubmed.lookup, ingrediente, texts), timeout=TOTAL_TIMEOUT_S + 0.5
+            )
+        except Exception as exc:  # noqa: BLE001 - cualquier falla significa "sin lecturas"
+            log.warning("evidencia_ingrediente falló (%s)", type(exc).__name__)
+            return shown
+        if not result.articulos:
+            return shown
+        reading = {"ingrediente": ingrediente.strip(), "articulos": result.articulos}
+        session.readings.append(reading)
+        await session.emit({"type": "readings", **reading})
+        if session.saved is not None:
+            try:
+                await deps.store.set_readings(session.saved["rec_id"], session.readings)
+            except Exception as exc:  # noqa: BLE001
+                log.error("no se almacenaron las lecturas: %s", exc)
+        return {"lecturas_en_pantalla": True}  # el modelo nunca ve títulos ni PMID
+
+    tools = [
         registrar_perfil,
         buscar_productos,
         detalle_producto,
@@ -754,6 +803,9 @@ def build_tools(session: Session, deps: Deps) -> list[Any]:
         guardar_recomendacion,
         derivar_asesor,
     ]
+    if deps.pubmed is not None:
+        tools.append(evidencia_ingrediente)
+    return tools
 
 
 def _routine_result(
@@ -762,6 +814,7 @@ def _routine_result(
     repeated: bool = False,
     error: str | None = None,
     over_budget: list[str] | None = None,
+    warning: str | None = None,
 ) -> dict[str, Any]:
     """Resultado de `armar_rutina` para el modelo: lo que debe decir, sin texto libre inventado."""
     assert session.routine is not None
@@ -784,6 +837,8 @@ def _routine_result(
     }
     if over_budget:
         result["fuera_del_tope_del_cliente"] = over_budget
+    if warning:
+        result["warning"] = warning
     if code:
         result["codigo_corto"] = code
         result["codigo_para_dictar"] = _spell(code)

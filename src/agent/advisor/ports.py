@@ -32,6 +32,9 @@ class RecommendationStore(Protocol):
         Debe fallar si no existe o si ya fue atendida.
         """
 
+    async def set_readings(self, rec_id: str, readings: list[dict[str, Any]]) -> None:
+        """Agrega las lecturas de PubMed a una recomendación ya guardada. Puede fallar sin perder la recomendación."""
+
 
 class HandoffNotifier(Protocol):
     async def notify(self, session_id: str, motivo: str, perfil: dict[str, Any]) -> None:

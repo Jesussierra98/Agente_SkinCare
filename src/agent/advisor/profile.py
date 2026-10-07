@@ -123,7 +123,12 @@ class ProfileState:
             return v
         if campo == "presupuesto":
             m = re.match(r"^\s*(\${1,3})(?!\$)", v)
-            return m.group(1) if m else None
+            if not m:
+                return None
+            # Dos niveles distintos ("$ y $$$") son ambiguos. Un precio como "$1,300" no cuenta como nivel.
+            if len(set(re.findall(r"\${1,3}(?![\d$])", v))) > 1:
+                return None
+            return m.group(1)
         low = v.lower()
         if low in CATEGORIAS[campo]:
             return low

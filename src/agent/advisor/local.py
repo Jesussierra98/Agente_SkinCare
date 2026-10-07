@@ -82,6 +82,12 @@ class InMemoryRecommendations:
         rec["version"] = int(rec.get("version", 1)) + 1
         log.info("recomendación %s actualizada (versión %d)", rec["codigo_corto"], rec["version"])
 
+    async def set_readings(self, rec_id: str, readings: list[dict[str, Any]]) -> None:
+        rec = self.items.get(rec_id)
+        if rec is None:
+            raise KeyError("recomendación inexistente")
+        rec["lecturas_pubmed"] = readings
+
 
 class LogNotifier:
     """`HandoffNotifier` que solo registra la derivación en el log."""

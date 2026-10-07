@@ -19,7 +19,14 @@ export interface Recommendation {
   productos: CajaProduct[];
 }
 
-export type CajaErrorCode = 'invalid_credentials' | 'network' | 'not_found' | 'invalid_code' | 'server' | 'expired';
+export type CajaErrorCode =
+  | 'invalid_credentials'
+  | 'network'
+  | 'not_found'
+  | 'invalid_code'
+  | 'server'
+  | 'expired'
+  | 'forbidden';
 
 export class CajaError extends Error {
   constructor(public readonly code: CajaErrorCode) {
@@ -37,13 +44,24 @@ export interface CajaApi {
   markAttended(recId: string): Promise<Recommendation>;
 }
 
+/** Precio de la API (`"1234.50"`) a centavos enteros, sin pasar por punto flotante. `null` si el formato no es válido. */
+export function priceToCents(price: string): number | null {
+  const match = /^(\d{1,6})(?:\.(\d{1,2}))?$/.exec(price.trim());
+  if (!match) return null;
+  return Number(match[1]) * 100 + Number((match[2] ?? '').padEnd(2, '0'));
+}
+
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
-/** Extrae el `rec_id` de una URL de QR `https://<dominio>/caja?rec=<uuid>`. */
-export function parseQrUrl(text: string): string | null {
+/**
+ * Extrae el `rec_id` de una URL de QR `https://<dominio>/caja?rec=<uuid>`.
+ * Con `allowedHost` (por ejemplo `tienda.ejemplo.com`), un QR de otro dominio se rechaza.
+ */
+export function parseQrUrl(text: string, allowedHost?: string): string | null {
   try {
     const url = new URL(text.trim());
+    if (allowedHost && url.host.toLowerCase() !== allowedHost.trim().toLowerCase()) return null;
     if (url.pathname.replace(/\/+$/, '') !== '/caja') return null;
     const rec = url.searchParams.get('rec');
     return rec && UUID_V4.test(rec) ? rec : null;

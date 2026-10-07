@@ -9,7 +9,7 @@ Diseños de pantalla: `.kiro/specs/skincare-voice-advisor/design/`.
 cloudformation/   Stacks de infraestructura (pendiente)
 src/etl/          ETL del catálogo (pendiente)
 src/agent/        Agente de voz (pendiente)
-src/caja_api/     Lambda de Caja (pendiente)
+src/caja_api/     Lambda de Caja (rutas listas; falta la infraestructura)
 src/frontend/     Vista_Cliente (Kiosco) y Vista_Caja (React + Vite + Tailwind)
 catalog/          Catálogo CSV y catálogo de muestra
 scripts/          Despliegue y pruebas de humo
@@ -93,6 +93,49 @@ los 4 segmentos de cliente, los niveles de precio y 64 combinaciones curadas. Se
 El agente la usa como orientación (sus productos curados pasan primero), no como receta: solo 17 de las 128
 combinaciones tienen sus 3 productos en el catálogo actual. Las reglas de clasificación de productos sin `Funcion`
 están en `src/etl/config/inference_rules.json` y los filtros de alcance (marcas, tipos de producto) en `settings.json`.
+
+## Spike 4.8: salida estructurada con Claude Haiku 4.5
+
+`python scripts/spike_structured_output.py` lista los perfiles de inferencia de Haiku 4.5 y hace una llamada a
+Converse con `outputConfig.textFormat` (JSON Schema). Resultado del 06/10/2026 en `us-east-1`:
+
+- Perfiles disponibles: `us.anthropic.claude-haiku-4-5-20251001-v1:0` y `global.anthropic.claude-haiku-4-5-20251001-v1:0`.
+  `ROUTINE_MODEL_ID` ya usa el primero; no hace falta cambiarlo.
+- `outputConfig.textFormat` funciona: la respuesta fue JSON válido que cumple el esquema (`stopReason=end_turn`).
+- Una llamada pequeña (355 tokens de entrada) tardó unos 2 s. La rutina real envía más candidatos; el límite de
+  lectura del cliente es de 10 s, así que conviene medir la latencia de `armar_rutina` con el catálogo completo.
+- El esquema no admite `minimum` en enteros; por eso el rango de `beneficios_idx` se valida en código.
+
+## Medición de latencia de las herramientas (06/10/2026)
+
+`python scripts/measure_latency.py [repeticiones]` ejecuta `armar_rutina` y luego `ajustar_rutina` (más barato) con el
+catálogo real procesado (343 productos) y Claude Haiku 4.5, para 6 perfiles distintos. Cada perfil hace 2 llamadas a
+Bedrock. Para ver el avance en vivo, define `LATENCY_LOG` con una ruta de archivo.
+
+| Herramienta | Mediana | p90 | Máximo | Fallos |
+|---|---|---|---|---|
+| `armar_rutina` | 2.9 s | 3.1 s | 3.1 s | 0 de 6 |
+| `ajustar_rutina` | 2.3 s | 2.6 s | 2.6 s | 0 de 6 |
+
+Casi todo es la llamada al modelo (más del 98 %); la búsqueda, el ranking y el guardado local suman decenas de
+milisegundos. Es la medición de las herramientas, no de la conversación completa: no incluye la latencia de Nova 2 Sonic
+ni del audio. Mientras corre la herramienta, el asesor queda en silencio unos 3 s; conviene que diga una frase corta
+antes de llamarla (por ejemplo "déjame armar tu rutina").
+
+## Caja con la API real
+
+Por defecto la Caja usa datos simulados. Para hablar con Cognito y la API de Caja, crea `src/frontend/.env.local`
+(está ignorado por git) con:
+
+```
+VITE_CAJA_API_URL=https://<api-id>.execute-api.us-east-1.amazonaws.com
+VITE_COGNITO_USER_POOL_ID=us-east-1_XXXXXXXXX
+VITE_COGNITO_CAJA_CLIENT_ID=<id del cliente CajaClient>
+VITE_STORE_DOMAIN=tienda.ejemplo.com   # opcional: solo acepta QR de ese dominio
+```
+
+Si falta cualquiera de las tres primeras, se usa la API simulada. El inicio de sesión usa SRP (la contraseña no viaja
+en claro) y la sesión vive en `sessionStorage`. La cámara exige HTTPS o `localhost`. Pruebas del frontend: `npm test`.
 
 ## Orden de despliegue (cuando exista la infraestructura)
 

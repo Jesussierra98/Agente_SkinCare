@@ -169,7 +169,7 @@ Notas de orden:
     - Prompt del Motor_Rutina: un producto por paso, solo candidatos, razón desde Beneficios, `requiere_asesor: true` ante alergia, acné severo o embarazo.
     - Definir en un archivo de configuración los temas denegados del Guardrail `ultra-skincare-guardrail` (consejo médico, diagnóstico, compatibilidad química) que luego consume el stack 03.
     - _Requirements: 8.2, 8.3, 8.5, 9.1, 9.2, 9.3, 12.1, 12.2_
-  - [ ] 4.8 Spike: Converse con salida estructurada en Claude Haiku 4.5
+  - [x] 4.8 Spike: Converse con salida estructurada en Claude Haiku 4.5 (hecho el 06/10/2026, resultado en el README; script `scripts/spike_structured_output.py`)
     - Verificar en `us-east-1` el ID exacto del perfil de inferencia y el soporte de `outputConfig.textFormat`. Registrar el resultado en el README y ajustar `ROUTINE_MODEL_ID`. Requiere credenciales AWS (usar la skill `signing-in-to-aws` si hace falta).
     - _Requirements: 10.1, 10.2_
 
@@ -184,28 +184,29 @@ Notas de orden:
     - `build_guide.py` convierte el Excel de la guía en `guide.json`; el asesor sigue su embudo de preguntas, sus niveles de precio ($ hasta 1,300; ) hasta 3,500; )$ más) y prioriza sus combinaciones curadas.
     - `ajustar_rutina` acepta varios pasos (`pasos`), cambia lo que tenga buena alternativa y deja igual lo demás, elige sustitutos por parecido (mismo tipo de producto, misma marca, precio cercano) y no cambia nada si el tope ya se cumple.
     - _Requirements: 3.1, 4.1, 7.3, 7.4, 7.5, 10.1_
-- [ ] 5. Fase 5 (adelantada): Herramienta_Guardar y Consultor_PubMed como librerías
-  - [ ] 5.1 Implementar validación y generación de código
+- [x] 5. Fase 5 (adelantada): Herramienta_Guardar y Consultor_PubMed como librerías
+  - Nota: los módulos viven en `src/agent/advisor/` (`save.py`, `dynamo.py`, `pubmed.py`), no en `src/agent/`. Quedan para la tarea 7: el `CatalogRepository` sobre DynamoDB (`BatchGetItem` en `ultra-productos`), el proveedor de la API key desde Secrets Manager, y `PUBMED_ENABLED` en la configuración y el system prompt (que indique no verbalizar las lecturas).
+  - [x] 5.1 Implementar validación y generación de código
     - En `src/agent/save.py`: `validate_routine_for_save` (pura) con exactamente 4 objetos, `paso` entero 1 a 4 sin repetidos, campos `str` requeridos y `precio` 0 a 999,999.99 con máximo 2 decimales.
     - `generate_codigo_corto()` con `secrets.choice`, letras `ABCDEFGHJKLMNPQRSTUVWXYZ` y dígitos `23456789`, formato `LLL-DDD` (DD-04).
     - _Requirements: 13.2, 13.5, 13.6, 23.2, 23.3, 23.7, 23.9_
-  - [ ] 5.2 Implementar `guardar(routine, session)`
+  - [x] 5.2 Implementar `guardar(routine, session)` (en `tools.save_recommendation` + `DynamoRecommendations`)
     - Verificar los 4 SKUs con `BatchGetItem`, releer `nombre`, `marca`, `precio`, `imagen_url` y `modo_uso` de `ultra-productos`, generar `rec_id` UUID v4 y `codigo_corto` único consultando el GSI `codigo_corto-index` (máximo 5 intentos), y escribir con `PutItem` condicionado a `attribute_not_exists(rec_id)`: `estado="pendiente"`, `fecha_creacion` ISO 8601 UTC con `Z`. Timeout del cliente DynamoDB de 2 s, total ≤3 s.
     - Si hay lecturas de PubMed, hacer un `UpdateItem` posterior para `lecturas_pubmed`; si falla, conservar la recomendación y devolver `warning: "lecturas_no_almacenadas"`.
     - Escritura fallida o 5 colisiones: error `no_se_guardo` sin `rec_id` ni código.
     - _Requirements: 13.1, 13.3, 13.4, 13.9, 13.10, 13.11, 17.6, 17.8, 23.4_
-  - [ ]* 5.3 Pruebas de propiedad de Guardar
+  - [x]* 5.3 Pruebas de propiedad de Guardar (`tests/test_save_pubmed.py`, `tests/test_session_handoff.py`)
     - **Property 31: Guardar valida la rutina completa antes de escribir**
     - **Property 32: El Codigo_Corto tiene el formato definido y es único dentro de 5 intentos**
     - **Property 33: Guardar y consultar devuelve la misma recomendación por cualquier vía** (parte de guardado; la consulta por API se completa en 7.4)
     - **Validates: Requirements 13.1, 13.2, 13.3, 13.4, 13.5, 13.6, 13.9, 13.11, 17.6, 23.3, 23.4, 23.7, 23.9**
-  - [ ] 5.4 Implementar el Consultor_PubMed
+  - [x] 5.4 Implementar el Consultor_PubMed (herramienta `evidencia_ingrediente` solo se registra si `Deps.pubmed` existe)
     - En `src/agent/pubmed.py`: `ingredient_in_routine` (NFKD, sin diacríticos, `casefold`, coincidencia con elemento completo tras separar por comas y saltos de línea). Si no pertenece, rechazar sin leer caché, sin llamar a NCBI y sin escribir.
     - Caché en `ultra-evidencias-ingredientes` con clave normalizada, vigencia de 30 días y `ttl`. API Key desde Secrets Manager. `eSearch` (retmax 5) y `eSummary`, timeout 5 s cada una, máximo 10 s en total. Éxito con 0 artículos se guarda; fallo de NCBI o Secrets Manager devuelve respuesta vacía sin escribir.
     - La herramienta `evidencia_ingrediente` emite el evento `readings` al cliente, agrega a `SessionState.readings` y devuelve al modelo solo `{"lecturas_en_pantalla": true|false}`.
     - Controlada por `PUBMED_ENABLED` (predeterminado `false`).
     - _Requirements: 16.1, 16.2, 16.3, 16.4, 16.5, 16.6, 16.7, 17.1, 17.4, 17.7_
-  - [ ]* 5.5 Pruebas de propiedad de PubMed
+  - [x]* 5.5 Pruebas de propiedad de PubMed (`tests/test_save_pubmed.py`)
     - **Property 42: PubMed solo se consulta para ingredientes de la rutina**
     - **Property 43: La caché de PubMed se comporta según su vigencia**
     - **Property 45: El modelo de voz nunca recibe contenido de PubMed**
@@ -297,16 +298,17 @@ Notas de orden:
   - Ejecutar todas las pruebas de Python y resolver dudas con el usuario antes de construir los frontends.
 
 - [ ] 9. Fase 5: API_Caja (`ultra-caja-lambda`)
-  - [ ] 9.1 Implementar la lógica pura de la API_Caja
+  - Nota: los módulos se llaman `caja_core.py` y `caja_handler.py` (no `core.py` ni `handler.py`) para no chocar con los del ETL en el `pythonpath` de las pruebas. El handler de la Lambda es `caja_handler.lambda_handler`.
+  - [x] 9.1 Implementar la lógica pura de la API_Caja
     - En `src/caja_api/core.py`: `classify_id(id)` (UUID v4 → clave; `strip().upper()` con `^[A-Z]{3}-\d{3}$` → GSI; otro → 400 `codigo_invalido`), armado de respuesta con `productos[4]` ordenados por `paso`, precios como cadena decimal con 2 decimales, y `total_sugerido` con `Decimal` (DD-12), y verificación de pertenencia al grupo `caja`.
     - _Requirements: 13.10, 15.1, 15.2, 15.8, 15.9, 21.4_
-  - [ ] 9.2 Implementar el handler y las rutas
+  - [x] 9.2 Implementar el handler y las rutas
     - `GET /recomendacion/{id}`: 403 si `cognito:groups` no incluye `caja`, 404 `no_encontrada` si no existe (sin datos de otra recomendación). Leer el snapshot guardado, no `ultra-productos`.
     - `POST /recomendacion/{id}/atendida`: `UpdateItem` con `ConditionExpression: estado = :pendiente` fijando `estado="atendida"`, `fecha_atendida` (ISO 8601 UTC) y `cajero_id` (`username`, con `sub` de respaldo). Si falla la condición, leer y responder 200 con los valores originales. Error de DynamoDB: 500 sin modificar.
     - `POST /derivaciones/{session_id}/confirmar`: `UpdateItem` sobre `ultra-sesiones` fijando `handoff.estado = "confirmada"`.
     - Timeout 10 s y objetivo ≤3 s. Rol IAM con el mínimo privilegio del diseño.
     - _Requirements: 13.12, 14.7, 15.3, 15.4, 15.6, 15.7, 15.9, 21.4, 22.12, 12.7_
-  - [ ]* 9.3 Pruebas de propiedad de la API_Caja con moto
+  - [x]* 9.3 Pruebas de propiedad de la API_Caja con moto (`tests/test_caja_api.py`)
     - **Property 33: Guardar y consultar devuelve la misma recomendación por cualquier vía** (parte de consulta)
     - **Property 34: Un identificador desconocido o inválido no devuelve ni modifica datos**
     - **Property 36: Marcar como atendida es idempotente y conserva al primer cajero**
@@ -360,23 +362,23 @@ Notas de orden:
     - _Requirements: 5.5, 5.8, 18.3, 18.9, 18.10, 18.11_
 
 - [ ] 11. Fase 4: Vista_Caja
-  - [ ] 11.1 Implementar validadores y modelo de vista de Caja
+  - [x] 11.1 Implementar validadores y modelo de vista de Caja (sin `TOTAL SUGERIDO` ni fecha larga: se respeta el diseño aceptado en `ui-reference.md`, filas 5 a 7)
     - `isValidCode` (`strip`, mayúsculas, `^[A-Z]{3}-\d{3}$`), `validateImage` (`image/jpeg` o `image/png`, ≤10 MB) y el modelo de vista de la recomendación (botón habilitado solo si `PENDIENTE`, `fecha_atendida` en DD/MM/AAAA, total con `formatMXN`).
     - _Requirements: 14.6, 15.5, 20.3, 20.5, 20.6, 20.8_
-  - [ ]* 11.2 Pruebas de propiedad de Caja (fast-check)
+  - [x]* 11.2 Pruebas de propiedad de Caja (fast-check) (`src/caja/caja.test.ts`, `src/caja/Cashier.test.tsx`)
     - **Property 40: El modelo de vista de Caja refleja el estado de la recomendación**
     - **Property 41: Los validadores de entrada de Caja aceptan solo lo permitido**
     - **Validates: Requirements 14.6, 15.5, 20.3, 20.6, 20.8**
-  - [ ] 11.3 Conectar la Vista_Caja a Cognito y a la API real
+  - [x] 11.3 Conectar la Vista_Caja a Cognito y a la API real (`httpCajaApi.ts`, `cognitoAuth.ts`, `config.ts`; se activa con `VITE_CAJA_API_URL`, `VITE_COGNITO_USER_POOL_ID` y `VITE_COGNITO_CAJA_CLIENT_ID`; sin ellas sigue la API simulada). Falta probarlo contra un User Pool y una API reales.
     - Reemplazar el `MockCajaApi` del prototipo 1.5 por el cliente real.
     - `auth/cajaAuth.ts` con `amazon-cognito-identity-js` (SRP) y `CajaClient`, tokens en `sessionStorage`. Un 401 o JWT vencido cierra la sesión local, muestra "la sesión expiró" y conserva el código.
     - `lib/cajaApi.ts` con `fetch` y `AbortController` a 10 s.
     - Guardia de ruta: sin sesión se muestra el login y ningún dato de rutinas.
     - _Requirements: 14.10, 14.11, 19.9, 21.3_
-  - [ ] 11.4 Completar `LoginScreen`
+  - [x] 11.4 Completar `LoginScreen`
     - Ya existe en el prototipo 1.5; aquí se agregan las validaciones y los mensajes de error reales. Encabezado, título y textos de Req. 19. Usuario (máx. 64) y Contraseña (máx. 128, oculta). Valida campos vacíos sin enviar. Deshabilita "Entrar" mientras autentica. Credenciales rechazadas: conserva usuario, vacía contraseña y no indica cuál falló. Sin red o timeout de 10 s: mensaje distinto y conserva ambos valores.
     - _Requirements: 19.1, 19.2, 19.3, 19.4, 19.5, 19.6, 19.7, 19.8_
-  - [ ] 11.5 Completar `OperationalScreen` y `RoutineResult`
+  - [x] 11.5 Completar `OperationalScreen` y `RoutineResult` (lectura real con `html5-qrcode` en `qrReader.ts`; la cámara y la lectura de foto NO se han probado en un navegador real)
     - Ya existen en el prototipo 1.5; aquí se conectan el escáner y la carga de foto. Botones "Activar Cámara Escáner" (`html5-qrcode`) y "Subir Foto de QR" (`Html5Qrcode.scanFile`), campo Código `[ABC-123]` y "Buscar" (convierte a mayúsculas antes de validar). `parseQrUrl` para el QR; fallo o cámara denegada muestra el mensaje y mantiene foto y código manual.
     - `RoutineResult`: "Rutina Identificada: #<Codigo_Corto> | <DD/MM/AAAA> | Estado: <ESTADO>", tabla de 4 filas por PASO con SKU, PRODUCTO, PASO y PRECIO, "TOTAL SUGERIDO" y el botón "MARCAR COMO ATENDIDA Y COMPLETAR DESPACHO". Error al despachar o sin respuesta en 10 s: mantiene PENDIENTE y el botón habilitado.
     - Pendiente: el texto del encabezado de la vista operativa (Req. 20.1) está truncado en los requerimientos; pedirlo al usuario.
@@ -384,7 +386,7 @@ Notas de orden:
   - [ ] 11.6 Pantalla mínima de confirmación de derivación
     - Página en la Vista_Caja que abre el enlace de la notificación y llama a `POST /derivaciones/{session_id}/confirmar`. Solo se construye si el usuario confirma el alcance (DD-14).
     - _Requirements: 12.7_
-  - [ ]* 11.7 Pruebas de ejemplo de Caja
+  - [ ]* 11.7 Pruebas de ejemplo de Caja (cubiertas: login, guardia de ruta, campos vacíos, imagen inválida, errores de servidor y sesión vencida; faltan cámara denegada y un `axe-core` de Caja)
     - Flujos de login, JWT vencido, guardia de ruta, campos vacíos, cámara denegada, imagen inválida, error de servidor.
     - _Requirements: 14.6, 14.8, 14.10, 14.11, 19.7, 19.9_
 

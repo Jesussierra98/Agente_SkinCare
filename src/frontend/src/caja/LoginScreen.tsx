@@ -28,6 +28,9 @@ export function LoginScreen({ onLogin, notice }: Props) {
       if (err instanceof CajaError && err.code === 'network') {
         // Sin conexión: se conservan ambos valores.
         setError('No hay conexión con el servidor. Revisa la red e inténtalo de nuevo.');
+      } else if (err instanceof CajaError && err.code === 'server') {
+        // Falla del servicio: no es culpa de las credenciales, así que no se vacía nada.
+        setError('No se pudo iniciar sesión por un problema del servicio. Inténtalo de nuevo en un momento.');
       } else {
         // Credenciales rechazadas: se conserva el usuario, se vacía la contraseña y no se dice cuál falló.
         setError('Usuario o contraseña incorrectos.');
